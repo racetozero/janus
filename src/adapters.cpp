@@ -660,63 +660,187 @@ void append_pi(Appender& output, Session& target, const Message& message) {
   target.last_uuid = id;
 }
 
+SessionRef create_peer(const Store& destination, const SessionRef& source_reference) {
+  Session source = scan_session(source_reference);
+  if (source.id.empty())
+    throw std::runtime_error("session metadata is missing in " + source_reference.store.string());
+  source.title = imported_title(source_reference.harness, source);
+  Session target{make_uuid(),  source.cwd.empty() ? fs::current_path().string() : source.cwd,
+                 {},           0,
+                 source.title, {}};
+  SessionRef reference{destination.harness, destination.path, target.id, 0};
+
+  if (!is_database_harness(destination.harness)) {
+    reference.store = destination.harness == Harness::codex
+                          ? codex_path(destination.path, target.id)
+                      : destination.harness == Harness::claude
+                          ? destination.path / sanitize_cwd(target.cwd) / (target.id + ".jsonl")
+                          : pi_path(destination.path, target);
+    fs::create_directories(reference.store.parent_path());
+    const fs::path temporary = reference.store.string() + ".tmp";
+    {
+      Appender output(temporary);
+      if (destination.harness == Harness::codex) {
+        const std::string timestamp = now_iso();
+        output.line("{\"timestamp\":" + quote(timestamp) +
+                    ",\"ordinal\":0,\"type\":\"session_meta\",\"payload\":{\"session_id\":" +
+                    quote(target.id) + ",\"id\":" + quote(target.id) +
+                    ",\"timestamp\":" + quote(timestamp) + ",\"cwd\":" + quote(target.cwd) +
+                    ",\"originator\":\"janus\",\"cli_version\":\"0.0.0\",\"source\":\"cli\","
+                    "\"model_provider\":\"openai\",\"history_mode\":\"legacy\"}}");
+      } else if (destination.harness == Harness::kiss || destination.harness == Harness::pi) {
+        const std::string header_id = make_uuid();
+        output.line("{\"type\":\"session\",\"version\":3,\"id\":" + quote(target.id) +
+                    ",\"timestamp\":" + quote(now_iso()) + ",\"cwd\":" + quote(target.cwd) + '}');
+        output.line("{\"type\":\"session_info\",\"id\":" + quote(header_id) +
+                    ",\"parentId\":null,\"timestamp\":" + quote(now_iso()) +
+                    ",\"name\":" + quote(target.title) + '}');
+        target.last_uuid = header_id;
+      } else if (destination.harness == Harness::claude) {
+        output.line("{\"type\":\"ai-title\",\"sessionId\":" + quote(target.id) +
+                    ",\"aiTitle\":" + quote(target.title) + '}');
+      } else {
+        throw std::runtime_error("target is not a JSONL harness");
+      }
+      scan_session(source_reference, [&](const Message& message) {
+        if (destination.harness == Harness::codex)
+          append_codex(output, target, message);
+        else if (destination.harness == Harness::claude)
+          append_claude(output, target, message);
+        else
+          append_pi(output, target, message);
+      });
+    }
+    fs::rename(temporary, reference.store);
+    if (destination.harness == Harness::codex) {
+      Appender index(destination.path.parent_path() / "session_index.jsonl");
+      index.line("{\"id\":" + quote(target.id) + ",\"thread_name\":" + quote(target.title) +
+                 ",\"updated_at\":" + quote(now_iso()) + '}');
+    }
+    reference.stamp = session_stamp(reference);
+    return reference;
+  }
+
+  Database database(destination.path);
+  Transaction transaction(database);
+  const std::int64_t now = now_milliseconds();
+  if (destination.harness == Harness::hermes) {
+    require_table(database, "sessions");
+    require_table(database, "messages");
+    Statement duplicate = database.prepare("SELECT 1 FROM sessions WHERE title = ? LIMIT 1");
+    duplicate.bind(1, target.title);
+    if (duplicate.row()) target.title += " (" + target.id.substr(0, 8) + ')';
+    Statement insert = database.prepare(
+        "INSERT INTO sessions (id, source, started_at, message_count, tool_call_count, cwd, title, "
+        "title_source, last_activity_at) VALUES (?, 'cli', ?, 0, 0, ?, ?, 'imported', ?)");
+    insert.bind(1, target.id);
+    insert.bind(2, now / 1000);
+    insert.bind(3, target.cwd);
+    insert.bind(4, target.title);
+    insert.bind(5, now / 1000);
+    insert.row();
+  } else if (destination.harness == Harness::opencode) {
+    require_table(database, "session");
+    require_table(database, "message");
+    require_table(database, "part");
+    require_table(database, "project");
+    std::string project_id;
+    Statement project = database.prepare(
+        "SELECT id FROM project WHERE worktree = ? OR ? LIKE worktree || '/%' "
+        "ORDER BY length(worktree) DESC LIMIT 1");
+    project.bind(1, target.cwd);
+    project.bind(2, target.cwd);
+    if (project.row()) project_id = project.text(0);
+    if (project_id.empty()) {
+      Statement fallback =
+          database.prepare("SELECT id FROM project ORDER BY time_updated DESC LIMIT 1");
+      if (fallback.row()) project_id = fallback.text(0);
+    }
+    if (project_id.empty()) throw std::runtime_error("OpenCode database has no project row");
+    target.id = "ses_" + target.id;
+    reference.id = target.id;
+    Statement insert = database.prepare(
+        "INSERT INTO session (id, project_id, slug, directory, title, version, time_created, "
+        "time_updated) VALUES (?, ?, ?, ?, ?, 'janus', ?, ?)");
+    insert.bind(1, target.id);
+    insert.bind(2, project_id);
+    insert.bind(3, target.id);
+    insert.bind(4, target.cwd);
+    insert.bind(5, target.title);
+    insert.bind(6, now);
+    insert.bind(7, now);
+    insert.row();
+  } else {
+    require_table(database, "session_nodes");
+    require_table(database, "session_windows");
+    require_table(database, "transcript_events");
+    require_table(database, "transcript_rewrite_watermarks");
+    const std::string key = "agent:main:explicit:janus-" + target.id;
+    const std::string entry = "{\"sessionId\":" + quote(target.id) +
+                              ",\"updatedAt\":" + std::to_string(now) +
+                              ",\"displayName\":" + quote(target.title) + '}';
+    Statement node = database.prepare(
+        "INSERT INTO session_nodes (session_key, current_session_id, entry_json, entry_valid, "
+        "updated_at, created_at, created_via, created_actor_type, display_name, label) "
+        "VALUES (?, ?, ?, -1, ?, ?, 'operator', 'human', ?, ?)");
+    node.bind(1, key);
+    node.bind(2, target.id);
+    node.bind(3, entry);
+    node.bind(4, now);
+    node.bind(5, now);
+    node.bind(6, target.title);
+    node.bind(7, target.title);
+    node.row();
+    Statement valid =
+        database.prepare("UPDATE session_nodes SET entry_valid = -1 WHERE session_key = ?");
+    valid.bind(1, key);
+    valid.row();
+    Statement window = database.prepare(
+        "INSERT INTO session_windows (session_id, session_key, session_scope, created_at, "
+        "updated_at, started_at, display_name) VALUES (?, ?, 'conversation', ?, ?, ?, ?)");
+    window.bind(1, target.id);
+    window.bind(2, key);
+    window.bind(3, now);
+    window.bind(4, now);
+    window.bind(5, now);
+    window.bind(6, target.title);
+    window.row();
+    Statement watermark = database.prepare(
+        "INSERT INTO transcript_rewrite_watermarks (session_id, generation, updated_at) VALUES (?, "
+        "?, ?)");
+    watermark.bind(1, target.id);
+    watermark.bind(2, make_uuid());
+    watermark.bind(3, now);
+    watermark.row();
+    const std::string header = "{\"type\":\"session\",\"version\":3,\"id\":" + quote(target.id) +
+                               ",\"timestamp\":" + quote(now_iso()) +
+                               ",\"cwd\":" + quote(target.cwd) + '}';
+    Statement event = database.prepare(
+        "INSERT INTO transcript_events (session_id, seq, event_json, created_at) VALUES (?, 0, ?, "
+        "?)");
+    event.bind(1, target.id);
+    event.bind(2, header);
+    event.bind(3, now);
+    event.row();
+  }
+
+  std::size_t count = 0;
+  scan_session(source_reference, [&](const Message& message) {
+    append_database_message(database, reference, target, message);
+    ++count;
+  });
+  finish_database_append(database, reference, count);
+  transaction.commit();
+  reference.stamp = session_stamp(reference);
+  return reference;
+}
+
 fs::path create_file_peer(const fs::path& root, const fs::path& source_path, Harness source_harness,
                           Harness target_harness) {
-  Session source = scan_session(source_path, source_harness);
-  if (source.id.empty())
-    throw std::runtime_error("session metadata is missing in " + source_path.string());
-  source.title = imported_title(source_harness, source);
-  Session target{make_uuid(),
-                 source.cwd.empty() ? fs::current_path().string() : source.cwd,
-                 {},
-                 0,
-                 source.title};
-  const fs::path path = target_harness == Harness::codex ? codex_path(root, target.id)
-                        : target_harness == Harness::claude
-                            ? root / sanitize_cwd(target.cwd) / (target.id + ".jsonl")
-                            : pi_path(root, target);
-  fs::create_directories(path.parent_path());
-  const fs::path temporary = path.string() + ".tmp";
-  {
-    Appender output(temporary);
-    if (target_harness == Harness::codex) {
-      const std::string timestamp = now_iso();
-      output.line("{\"timestamp\":" + quote(timestamp) +
-                  ",\"ordinal\":0,\"type\":\"session_meta\",\"payload\":{\"session_id\":" +
-                  quote(target.id) + ",\"id\":" + quote(target.id) +
-                  ",\"timestamp\":" + quote(timestamp) + ",\"cwd\":" + quote(target.cwd) +
-                  ",\"originator\":\"janus\",\"cli_version\":\"0.0.0\",\"source\":\"cli\","
-                  "\"model_provider\":\"openai\",\"history_mode\":\"legacy\"}}");
-    } else if (target_harness == Harness::kiss || target_harness == Harness::pi) {
-      const std::string header_id = make_uuid();
-      output.line("{\"type\":\"session\",\"version\":3,\"id\":" + quote(target.id) +
-                  ",\"timestamp\":" + quote(now_iso()) + ",\"cwd\":" + quote(target.cwd) + '}');
-      output.line("{\"type\":\"session_info\",\"id\":" + quote(header_id) +
-                  ",\"parentId\":null,\"timestamp\":" + quote(now_iso()) +
-                  ",\"name\":" + quote(target.title) + '}');
-      target.last_uuid = header_id;
-    } else if (target_harness == Harness::claude) {
-      output.line("{\"type\":\"ai-title\",\"sessionId\":" + quote(target.id) +
-                  ",\"aiTitle\":" + quote(target.title) + '}');
-    } else {
-      throw std::runtime_error("target is not a JSONL harness");
-    }
-    scan_session(source_path, source_harness, [&](const Message& message) {
-      if (target_harness == Harness::codex)
-        append_codex(output, target, message);
-      else if (target_harness == Harness::claude)
-        append_claude(output, target, message);
-      else
-        append_pi(output, target, message);
-    });
-  }
-  fs::rename(temporary, path);
-  if (target_harness == Harness::codex) {
-    Appender index(root.parent_path() / "session_index.jsonl");
-    index.line("{\"id\":" + quote(target.id) + ",\"thread_name\":" + quote(target.title) +
-               ",\"updated_at\":" + quote(now_iso()) + '}');
-  }
-  return path;
+  const Session source = scan_session(source_path, source_harness);
+  return create_peer(Store{target_harness, root},
+                     SessionRef{source_harness, source_path, source.id, fs::file_size(source_path)})
+      .store;
 }
 
 fs::path create_peer(const fs::path& root, const fs::path& source_path, Harness source_harness) {
@@ -746,6 +870,51 @@ std::size_t copy_missing(const fs::path& source_path, Harness source_harness,
       append_pi(output, target, message);
     ++copied;
   });
+  return copied;
+}
+
+std::size_t copy_missing(const SessionRef& source, const SessionRef& target_reference) {
+  if (!is_database_harness(source.harness) && !is_database_harness(target_reference.harness)) {
+    return copy_missing(source.store, source.harness, target_reference.store,
+                        target_reference.harness);
+  }
+
+  std::unordered_map<Fingerprint, std::uint32_t, FingerprintHash> remaining;
+  Session target = scan_session(target_reference,
+                                [&](const Message& message) { ++remaining[fingerprint(message)]; });
+  std::size_t copied = 0;
+  if (!is_database_harness(target_reference.harness)) {
+    Appender output(target_reference.store);
+    scan_session(source, [&](const Message& message) {
+      auto found = remaining.find(fingerprint(message));
+      if (found != remaining.end() && found->second > 0) {
+        if (--found->second == 0) remaining.erase(found);
+        return;
+      }
+      if (target_reference.harness == Harness::codex)
+        append_codex(output, target, message);
+      else if (target_reference.harness == Harness::claude)
+        append_claude(output, target, message);
+      else
+        append_pi(output, target, message);
+      ++copied;
+    });
+    return copied;
+  }
+
+  Database database(target_reference.store);
+  Transaction transaction(database);
+  scan_session(source, [&](const Message& message) {
+    auto found = remaining.find(fingerprint(message));
+    if (found != remaining.end() && found->second > 0) {
+      if (--found->second == 0) remaining.erase(found);
+      return;
+    }
+    append_database_message(database, target_reference, target, message);
+    ++copied;
+  });
+  finish_database_append(database, target_reference, copied);
+  transaction.commit();
   return copied;
 }
 
