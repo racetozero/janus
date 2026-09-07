@@ -26,7 +26,7 @@ jobs:
             asset: janus-aarch64-apple-darwin
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a
         with:
           xmake-version: 3.1.1
@@ -39,7 +39,7 @@ jobs:
       - name: Build PGO release
         shell: bash
         run: scripts/build-release.sh "${{ matrix.asset }}" "${GITHUB_REF_NAME#v}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.asset }}
           path: |
@@ -57,7 +57,7 @@ jobs:
             asset: janus-aarch64-unknown-linux-musl
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Build static musl release
         env:
           ASSET: ${{ matrix.asset }}
@@ -73,7 +73,7 @@ jobs:
             test "$(git -C /tmp/xxhash rev-parse HEAD)" = e626a72bc2321cd320e953a0ccf1584cad60f363 &&
             bash scripts/build-musl.sh "$ASSET" "${VERSION#v}"
           '
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.asset }}
           path: |
@@ -93,7 +93,7 @@ jobs:
             asset: janus-aarch64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a
         with:
           xmake-version: 3.1.1
@@ -114,7 +114,7 @@ jobs:
           Compress-Archive -Path dist/janus.exe,README.md,LICENSE -DestinationPath "dist/${{ matrix.asset }}.zip"
           $hash = (Get-FileHash "dist/${{ matrix.asset }}.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  ${{ matrix.asset }}.zip" | Set-Content "dist/${{ matrix.asset }}.zip.sha256"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.asset }}
           path: |
@@ -129,7 +129,7 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
           merge-multiple: true
