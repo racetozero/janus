@@ -12,6 +12,9 @@ target("janus")
     add_includedirs("include")
     add_files("src/*.cpp")
     add_packages("vcpkg::cli11", "vcpkg::simdjson", "vcpkg::xxhash")
+    if is_plat("windows") then
+        add_syslinks("shell32")
+    end
     add_defines('JANUS_VERSION="' .. (os.getenv("JANUS_VERSION") or "0.0.1") .. '"')
     if is_mode("release") then
         set_policy("build.optimization.lto", true)
