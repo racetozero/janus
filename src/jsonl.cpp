@@ -77,8 +77,12 @@ std::string make_uuid() {
 }
 
 fs::path user_home() {
+#ifdef _WIN32
+  const char* value = std::getenv("USERPROFILE");
+#else
   const char* value = std::getenv("HOME");
-  if (value == nullptr || *value == '\0') throw std::runtime_error("HOME is not set");
+#endif
+  if (value == nullptr || *value == '\0') throw std::runtime_error("home directory is not set");
   return value;
 }
 
