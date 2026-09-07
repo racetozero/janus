@@ -7,7 +7,7 @@ profile_dir="$(mktemp -d)"
 trap 'rm -rf "$profile_dir"' EXIT
 sources=(src/*.cpp)
 common=(-std=c++23 -O3 -DNDEBUG -flto -static -pthread -Iinclude
-        -I/tmp/CLI11/include -I/tmp/simdjson/include -I/tmp/xxhash -DCLI11_COMPILE
+        -I/tmp/CLI11/include -I/tmp/simdjson/include -I/tmp/simdjson/src -I/tmp/xxhash -DCLI11_COMPILE
         -DJANUS_VERSION="\"$version\"" "${sources[@]}" /tmp/CLI11/src/Precompile.cpp
         /tmp/simdjson/src/simdjson.cpp /tmp/xxhash/xxhash.c)
 
