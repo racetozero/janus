@@ -2,7 +2,8 @@
 
 #include <chrono>
 #include <fstream>
-#include <print>
+#include <iomanip>
+#include <iostream>
 #include <stdexcept>
 
 #include "janus/adapters.hpp"
@@ -60,7 +61,7 @@ void self_test() {
   if (copy_missing(claude, Harness::claude, codex, Harness::codex) != 0) {
     throw std::runtime_error("deduplication test failed");
   }
-  std::println("self-test passed");
+  std::cout << "self-test passed\n";
 }
 
 void benchmark(std::size_t message_count, bool header) {
@@ -94,10 +95,10 @@ void benchmark(std::size_t message_count, bool header) {
   const double reverse_ms =
       std::chrono::duration<double, std::milli>(reverse_end - reverse_start).count();
   if (header) {
-    std::println("messages\tinput_MiB\tclaude_to_codex_ms\tMiB_per_s\tcodex_to_claude_ms");
+    std::cout << "messages\tinput_MiB\tclaude_to_codex_ms\tMiB_per_s\tcodex_to_claude_ms\n";
   }
-  std::println("{}\t{:.2f}\t{:.2f}\t{:.2f}\t{:.2f}", message_count, mebibytes, forward_ms,
-               mebibytes * 1000.0 / forward_ms, reverse_ms);
+  std::cout << message_count << '\t' << std::fixed << std::setprecision(2) << mebibytes << '\t'
+            << forward_ms << '\t' << mebibytes * 1000.0 / forward_ms << '\t' << reverse_ms << '\n';
 }
 
 }  // namespace janus

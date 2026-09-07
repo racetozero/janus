@@ -2,7 +2,7 @@
 #include <chrono>
 #include <csignal>
 #include <exception>
-#include <print>
+#include <iostream>
 #include <thread>
 
 #include "janus/benchmark.hpp"
@@ -74,11 +74,11 @@ int main(int argc, char** argv) {
       const janus::Harness harness = import_path.filename().string().starts_with("rollout-")
                                          ? janus::Harness::codex
                                          : janus::Harness::claude;
-      std::println("{}", syncer.import_one(import_path, harness).string());
+      std::cout << syncer.import_one(import_path, harness).string() << '\n';
     } else if (sync) {
       const janus::ProcessLock lock(sync_options.state);
       janus::Syncer syncer(sync_options.claude_root, sync_options.codex_root, sync_options.state);
-      std::println("sync changes: {}", syncer.sync());
+      std::cout << "sync changes: " << syncer.sync() << '\n';
     } else if (serve) {
       const janus::ProcessLock lock(serve_options.state);
       if (serve_options.daemonize) janus::daemonize_process();
@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
         try {
           syncer.sync();
         } catch (const std::exception& error) {
-          std::println(stderr, "sync error: {}", error.what());
+          std::cerr << "sync error: " << error.what() << '\n';
         }
         for (unsigned tick = 0; running && tick < serve_options.interval * 10; ++tick) {
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
   } catch (const CLI::ParseError& error) {
     return app.exit(error);
   } catch (const std::exception& error) {
-    std::println(stderr, "janus: {}", error.what());
+    std::cerr << "janus: " << error.what() << '\n';
     return 1;
   }
 }

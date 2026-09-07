@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <fstream>
-#include <print>
+#include <iostream>
 #include <stdexcept>
 #include <utility>
 
@@ -74,14 +74,14 @@ std::size_t Syncer::sync() {
     const fs::path target = create_peer(codex_root_, path, Harness::claude);
     add_pair(path, target);
     ++changes;
-    std::println("created Codex session {}", target.string());
+    std::cout << "created Codex session " << target.string() << '\n';
   }
   for (const fs::path& path : discover(codex_root_, Harness::codex)) {
     if (known_.contains(normal(path)) || !has_messages(path, Harness::codex)) continue;
     const fs::path target = create_peer(claude_root_, path, Harness::codex);
     add_pair(target, path);
     ++changes;
-    std::println("created Claude session {}", target.string());
+    std::cout << "created Claude session " << target.string() << '\n';
   }
   for (Pair& pair : pairs_) {
     if (!fs::exists(pair.claude) || !fs::exists(pair.codex)) continue;
