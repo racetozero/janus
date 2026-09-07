@@ -8,6 +8,10 @@
 #include "janus/benchmark.hpp"
 #include "janus/sync.hpp"
 
+#ifndef JANUS_VERSION
+#define JANUS_VERSION "0.0.1"
+#endif
+
 namespace {
 
 volatile std::sig_atomic_t running = 1;
@@ -24,7 +28,7 @@ void add_paths(CLI::App& command, janus::Options& options) {
 int main(int argc, char** argv) {
   CLI::App app{"Move sessions between Claude Code and OpenAI Codex", "janus"};
   try {
-    app.set_version_flag("--version", "janus 0.1.0");
+    app.set_version_flag("--version", "janus " JANUS_VERSION);
     app.require_subcommand(1);
 
     janus::Options sync_options;

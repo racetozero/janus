@@ -178,7 +178,7 @@ void append_claude(Appender& output, Session& target, const Message& message) {
   output.line("{\"parentUuid\":" + (target.last_uuid.empty() ? "null" : quote(target.last_uuid)) +
               ",\"isSidechain\":false,\"userType\":\"external\",\"cwd\":" + quote(target.cwd) +
               ",\"sessionId\":" + quote(target.id) +
-              ",\"version\":\"janus-0.1\",\"type\":" + quote(role) + ",\"uuid\":" + quote(id) +
+              ",\"version\":\"janus-0.0.1\",\"type\":" + quote(role) + ",\"uuid\":" + quote(id) +
               ",\"timestamp\":" + quote(message.timestamp.empty() ? now_iso() : message.timestamp) +
               ",\"message\":" + body + '}');
   target.last_uuid = id;

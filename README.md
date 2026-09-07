@@ -137,3 +137,18 @@ The source layout follows this pipeline:
 
 Catch2 tests cover JSON escaping, conversion in both directions, and
 idempotent copy behavior. Run them with `just test`.
+
+## Releases
+
+CI builds and tests Janus on Linux, macOS, and Windows. A pushed `vMAJOR.MINOR.PATCH`
+tag creates a GitHub release with SHA-256 checksums and build attestations.
+Release archives cover x86-64 and ARM64 on glibc Linux, static musl Linux,
+macOS, and Windows.
+
+Linux and macOS release binaries use benchmark-trained PGO and full LTO.
+Windows release binaries use full LTO. Fat LTO objects are not used because
+Janus ships a final executable, not reusable object files.
+
+Normal builds get all dependencies from vcpkg. The isolated Alpine release
+container compiles the same pinned CLI11, simdjson, and xxHash releases from
+their upstream source because the vcpkg host tool requires glibc.

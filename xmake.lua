@@ -1,5 +1,5 @@
 set_project("janus")
-set_version("0.1.0")
+set_version("0.0.1")
 set_languages("c++23")
 set_policy("build.ccache", true)
 
@@ -8,9 +8,14 @@ add_requires("vcpkg::catch2", "vcpkg::cli11", "vcpkg::simdjson", "vcpkg::xxhash"
 
 target("janus")
     set_kind("binary")
+    set_targetdir("dist")
     add_includedirs("include")
     add_files("src/*.cpp")
     add_packages("vcpkg::cli11", "vcpkg::simdjson", "vcpkg::xxhash")
+    add_defines('JANUS_VERSION="' .. (os.getenv("JANUS_VERSION") or "0.0.1") .. '"')
+    if is_mode("release") then
+        set_policy("build.optimization.lto", true)
+    end
     set_warnings("all", "extra")
 
 target("janus-tests")

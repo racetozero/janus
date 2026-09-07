@@ -1,0 +1,142 @@
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg/installed
+
+jobs:
+  unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            asset: janus-x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            asset: janus-aarch64-unknown-linux-gnu
+          - runner: macos-15-intel
+            asset: janus-x86_64-apple-darwin
+          - runner: macos-15
+            asset: janus-aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a
+        with:
+          xmake-version: 3.1.1
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgJsonGlob: vcpkg.json
+          vcpkgGitCommitId: 04a9d8e5212d01ee1dd9478eadd9caade4f8b0d4
+          runVcpkgInstall: true
+          doNotCache: false
+      - name: Build PGO release
+        shell: bash
+        run: scripts/build-release.sh "${{ matrix.asset }}" "${GITHUB_REF_NAME#v}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            dist/${{ matrix.asset }}.tar.gz
+            dist/${{ matrix.asset }}.tar.gz.sha256
+
+  musl:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            asset: janus-x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            asset: janus-aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build static musl release
+        env:
+          ASSET: ${{ matrix.asset }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          docker run --rm -e ASSET -e VERSION -v "$PWD:/src" -w /src alpine:3.22 sh -lc '
+            apk add --no-cache bash build-base git linux-headers &&
+            git clone --depth 1 --branch v2.7.2 https://github.com/CLIUtils/CLI11 /tmp/CLI11 &&
+            git clone --depth 1 --branch v4.6.8 https://github.com/simdjson/simdjson /tmp/simdjson &&
+            git clone --depth 1 --branch v0.8.3 https://github.com/Cyan4973/xxHash /tmp/xxhash &&
+            test "$(git -C /tmp/CLI11 rev-parse HEAD)" = cbd58a3696887b34c70949aef21a71735a0c2ad5 &&
+            test "$(git -C /tmp/simdjson rev-parse HEAD)" = 17fef66827864c33170996554b7aa0598da080cd &&
+            test "$(git -C /tmp/xxhash rev-parse HEAD)" = e626a72bc2321cd320e953a0ccf1584cad60f363 &&
+            bash scripts/build-musl.sh "$ASSET" "${VERSION#v}"
+          '
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            dist/${{ matrix.asset }}.tar.gz
+            dist/${{ matrix.asset }}.tar.gz.sha256
+
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            arch: x86_64
+            asset: janus-x86_64-pc-windows-msvc
+          - runner: windows-11-arm
+            arch: arm64
+            asset: janus-aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a
+        with:
+          xmake-version: 3.1.1
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgJsonGlob: vcpkg.json
+          vcpkgGitCommitId: 04a9d8e5212d01ee1dd9478eadd9caade4f8b0d4
+          runVcpkgInstall: true
+          doNotCache: false
+      - name: Build release
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $env:JANUS_VERSION = $version
+          xmake f -c -m release -a "${{ matrix.arch }}" -y
+          xmake build janus
+          ./dist/janus.exe self-test
+          Compress-Archive -Path dist/janus.exe,README.md,LICENSE -DestinationPath "dist/${{ matrix.asset }}.zip"
+          $hash = (Get-FileHash "dist/${{ matrix.asset }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.asset }}.zip" | Set-Content "dist/${{ matrix.asset }}.zip.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            dist/${{ matrix.asset }}.zip
+            dist/${{ matrix.asset }}.zip.sha256
+
+  publish:
+    needs: [unix, musl, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: artifacts/*
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" --generate-notes --verify-tag artifacts/*
