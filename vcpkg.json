@@ -8,6 +8,7 @@
     "catch2",
     "cli11",
     "simdjson",
+    "sqlite3",
     "xxhash"
   ],
   "overrides": [

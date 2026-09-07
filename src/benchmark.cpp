@@ -71,7 +71,7 @@ void benchmark(std::size_t message_count, bool header) {
   fs::create_directories(claude_root / "project");
   fs::create_directories(codex_root);
   const fs::path claude = claude_root / "project/source.jsonl";
-  Session source{"benchmark", "/tmp/janus-benchmark", {}, 0};
+  Session source{"benchmark", "/tmp/janus-benchmark", {}, 0, {}};
   {
     Appender output(claude);
     const std::string payload(240, 'x');
