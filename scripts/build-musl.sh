@@ -5,7 +5,8 @@ asset="${1:?asset name is required}"
 version="${2:?version is required}"
 mkdir -p dist
 profile_dir="$(mktemp -d)"
-trap 'rm -rf "$profile_dir"' EXIT
+package_dir="$(mktemp -d)"
+trap 'rm -rf "$profile_dir" "$package_dir"' EXIT
 sources=(src/*.cpp)
 common=(-std=c++23 -O3 -DNDEBUG -flto -static -pthread -Iinclude
         -I/tmp/CLI11/include -I/tmp/simdjson/include -I/tmp/simdjson/src -I/tmp/xxhash -DCLI11_COMPILE
@@ -18,5 +19,11 @@ g++ "${common[@]}" -fprofile-use="$profile_dir" -fprofile-correction -Wno-missin
   -o dist/janus
 ./dist/janus self-test
 strip dist/janus
-tar -czf "dist/$asset.tar.gz" -C dist janus -C .. README.md LICENSE
+file dist/janus | grep -q 'statically linked'
+if readelf -d dist/janus | grep -q '(NEEDED)'; then
+  echo "musl release has dynamic dependencies" >&2
+  exit 1
+fi
+cp dist/janus README.md LICENSE "$package_dir/"
+tar -czf "dist/$asset.tar.gz" -C "$package_dir" janus README.md LICENSE
 (cd dist && sha256sum "$asset.tar.gz" >"$asset.tar.gz.sha256")
