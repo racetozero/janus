@@ -3,6 +3,7 @@ set -euo pipefail
 
 asset="${1:?asset name is required}"
 version="${2:?version is required}"
+mkdir -p dist
 profile_dir="$(mktemp -d)"
 trap 'rm -rf "$profile_dir"' EXIT
 sources=(src/*.cpp)
