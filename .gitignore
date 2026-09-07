@@ -1,0 +1,18 @@
+# Build output and local tools
+/build/
+/build-cmake/
+/.xmake/
+/.tools/
+/vcpkg_installed/
+/janus
+
+# Editor and operating system files
+/.idea/
+/.vscode/
+.DS_Store
+*.swp
+*~
+
+# Generated files
+compile_commands.json
+*.tmp

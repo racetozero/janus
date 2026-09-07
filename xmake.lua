@@ -1,0 +1,22 @@
+set_project("janus")
+set_version("0.1.0")
+set_languages("c++23")
+set_policy("build.ccache", true)
+
+add_rules("mode.debug", "mode.release")
+add_requires("vcpkg::catch2", "vcpkg::cli11", "vcpkg::simdjson", "vcpkg::xxhash")
+
+target("janus")
+    set_kind("binary")
+    add_includedirs("include")
+    add_files("src/*.cpp")
+    add_packages("vcpkg::cli11", "vcpkg::simdjson", "vcpkg::xxhash")
+    set_warnings("all", "extra")
+
+target("janus-tests")
+    set_kind("binary")
+    add_includedirs("include")
+    add_files("tests/*.cpp", "src/jsonl.cpp", "src/adapters.cpp")
+    add_packages("vcpkg::catch2", "vcpkg::simdjson", "vcpkg::xxhash")
+    set_warnings("all", "extra")
+    add_tests("unit")
