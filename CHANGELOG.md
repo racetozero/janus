@@ -2,6 +2,12 @@
 
 All notable changes to Janus are documented in this file.
 
+## [0.0.2] - 2026-09-08
+
+### Changed
+
+- Release the multi-harness synchronization and GitHub update command.
+
 ## [0.0.1] - 2026-09-07
 
 ### Added
@@ -21,3 +27,4 @@ All notable changes to Janus are documented in this file.
 - Use portable standard streams on C++23 toolchains that do not provide `<print>`.
 
 [0.0.1]: https://github.com/racetozero/janus/releases/tag/v0.0.1
+[0.0.2]: https://github.com/racetozero/janus/releases/tag/v0.0.2

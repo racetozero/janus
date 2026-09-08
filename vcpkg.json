@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "janus",
-  "version-semver": "0.0.1",
+  "version-semver": "0.0.2",
   "description": "Move session threads between AI coding harnesses.",
   "builtin-baseline": "04a9d8e5212d01ee1dd9478eadd9caade4f8b0d4",
   "dependencies": [
