@@ -51,7 +51,7 @@ try {
                 $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/latest"
                 $Version = $Release.tag_name
             } catch {
-                Fail "could not find the latest release; authenticate gh for a private repository"
+                Fail "could not find the latest public release"
             }
         }
     }
