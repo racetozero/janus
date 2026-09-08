@@ -31,7 +31,7 @@ else
   configure "-fprofile-use=$profile_dir -fprofile-correction -Wno-missing-profile"
 fi
 
-./dist/janus-tests
+xmake run janus-tests
 strip dist/janus
 tar -czf "dist/$asset.tar.gz" -C dist janus -C .. README.md LICENSE
 if command -v sha256sum >/dev/null 2>&1; then
