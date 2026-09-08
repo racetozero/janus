@@ -35,6 +35,10 @@ The installer detects the operating system, processor, and Linux C library. It
 downloads the correct release, verifies its SHA-256 checksum, and installs
 `janus` in the user binary directory.
 
+On Linux, the installer checks that the glibc release can run. If the machine's
+glibc is older than the release requires, it automatically installs the static
+musl release instead.
+
 Update an installed release from GitHub Releases:
 
 ```bash

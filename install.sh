@@ -55,6 +55,21 @@ download_release() {
         fail "could not download $checksum_name"
 }
 
+verify_staged_binary() {
+    command_exists tar || fail "tar is required to inspect the release"
+    probe_directory="$temporary_directory/probe-$target"
+    mkdir "$probe_directory"
+    tar -xzf "$temporary_directory/$archive_name" -C "$probe_directory"
+    probe_output=''
+    if probe_output="$("$probe_directory/janus" --version 2>&1)"; then
+        return 0
+    fi
+    case "$probe_output" in
+        *GLIBC_[0-9.]*not\ found* | *version*GLIBC_[0-9.]*not\ found*) return 2 ;;
+        *) return 1 ;;
+    esac
+}
+
 detect_target() {
     if [ -n "${JANUS_TARGET:-}" ]; then
         target="$JANUS_TARGET"
@@ -171,6 +186,24 @@ archive_name="janus-$target.tar.gz"
 checksum_name="$archive_name.sha256"
 
 say "Installing janus $version for $target"
+command_exists tar || fail "tar is required to extract $archive_name"
 download_release
 verify_archive
+if case "$target" in *-unknown-linux-gnu) true ;; *) false ;; esac; then
+    if verify_staged_binary; then
+        :
+    else
+        probe_status=$?
+        if [ "$probe_status" -eq 2 ]; then
+            target="${target%-gnu}-musl"
+            archive_name="janus-$target.tar.gz"
+            checksum_name="$archive_name.sha256"
+            say "The glibc runtime is too old; using the musl release for $target"
+            download_release
+            verify_archive
+        else
+            fail "the release binary could not run on this system"
+        fi
+    fi
+fi
 install_binary
