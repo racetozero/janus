@@ -5,8 +5,8 @@
 #include <iostream>
 #include <thread>
 
-#include "janus/benchmark.hpp"
 #include "janus/sync.hpp"
+#include "janus/update.hpp"
 
 #ifndef JANUS_VERSION
 #define JANUS_VERSION "0.0.1"
@@ -20,16 +20,28 @@ void stop(int) { running = 0; }
 void add_paths(CLI::App& command, janus::Options& options) {
   command.add_option("--claude-root", options.claude_root, "Claude session root");
   command.add_option("--codex-root", options.codex_root, "Codex session root");
+  command.add_option("--kiss-root", options.kiss_root, "KISS session root");
+  command.add_option("--pi-root", options.pi_root, "Pi session root");
+  command.add_option("--openclaw-root", options.openclaw_root, "OpenClaw agent root");
+  command.add_option("--hermes-db", options.hermes_db, "Hermes state database");
+  command.add_option("--opencode-db", options.opencode_db, "OpenCode database");
   command.add_option("--state", options.state, "Pair state file");
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-  CLI::App app{"Move sessions between Claude Code and OpenAI Codex", "janus"};
+  CLI::App app{R"(     _
+    (_) __ _ _ __  _   _ ___
+    | |/ _` | '_ \| | | / __|
+    | | (_| | | | | |_| \__ \
+   _/ |\__,_|_| |_|\__,_|___/
+  |__/
+
+Move sessions between AI coding harnesses)",
+               "janus"};
   try {
     app.set_version_flag("--version", "janus " JANUS_VERSION);
-    app.require_subcommand(1);
 
     janus::Options sync_options;
     CLI::App& sync = *app.add_subcommand("sync", "Run one bidirectional sync");
@@ -48,42 +60,34 @@ int main(int argc, char** argv) {
         ->check(CLI::PositiveNumber);
     serve.add_flag("--daemonize", serve_options.daemonize, "Run in the background");
 
-    std::size_t message_count = 10000;
-    CLI::App& benchmark = *app.add_subcommand("benchmark", "Run one synthetic benchmark");
-    benchmark.add_option("messages", message_count, "Synthetic message count")
-        ->check(CLI::PositiveNumber);
-    CLI::App& benchmark_suite =
-        *app.add_subcommand("benchmark-suite", "Run the standard benchmark suite");
-    CLI::App& self_test = *app.add_subcommand("self-test", "Run the built-in smoke test");
+    CLI::App& update = *app.add_subcommand("update", "Update Janus from GitHub Releases");
+
+    if (argc == 1) {
+      std::cout << app.help();
+      return 0;
+    }
 
     app.parse(argc, argv);
-    if (self_test) {
-      janus::self_test();
-    } else if (benchmark) {
-      janus::benchmark(message_count);
-    } else if (benchmark_suite) {
-      bool header = true;
-      for (const std::size_t count : {1000U, 10000U, 50000U}) {
-        janus::benchmark(count, header);
-        header = false;
-      }
+    if (update) {
+      janus::update();
     } else if (import) {
       const janus::ProcessLock lock(import_options.state);
-      janus::Syncer syncer(import_options.claude_root, import_options.codex_root,
-                           import_options.state);
-      const janus::Harness harness = import_path.filename().string().starts_with("rollout-")
-                                         ? janus::Harness::codex
-                                         : janus::Harness::claude;
+      janus::Syncer syncer(import_options);
+      const std::string path = import_path.string();
+      const janus::Harness harness =
+          import_path.filename().string().starts_with("rollout-") ? janus::Harness::codex
+          : path.find(".kiss") != std::string::npos               ? janus::Harness::kiss
+          : path.find(".pi") != std::string::npos                 ? janus::Harness::pi
+                                                                  : janus::Harness::claude;
       std::cout << syncer.import_one(import_path, harness).string() << '\n';
     } else if (sync) {
       const janus::ProcessLock lock(sync_options.state);
-      janus::Syncer syncer(sync_options.claude_root, sync_options.codex_root, sync_options.state);
+      janus::Syncer syncer(sync_options);
       std::cout << "sync changes: " << syncer.sync() << '\n';
     } else if (serve) {
       const janus::ProcessLock lock(serve_options.state);
       if (serve_options.daemonize) janus::daemonize_process();
-      janus::Syncer syncer(serve_options.claude_root, serve_options.codex_root,
-                           serve_options.state);
+      janus::Syncer syncer(serve_options);
       std::signal(SIGINT, stop);
       std::signal(SIGTERM, stop);
       while (running) {

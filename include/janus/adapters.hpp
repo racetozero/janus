@@ -23,5 +23,6 @@ Session scan_session(const SessionRef& session, const MessageFunction& on_messag
 SessionRef create_peer(const Store& target, const SessionRef& source);
 std::size_t copy_missing(const SessionRef& source, const SessionRef& target);
 std::uint64_t session_stamp(const SessionRef& session);
+std::vector<SessionRef> discover_sessions(const Store& store);
 
 }  // namespace janus

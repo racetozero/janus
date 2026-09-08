@@ -1,14 +1,15 @@
 # Janus
 
-Move live coding sessions between Claude Code and OpenAI Codex.
+Move live coding sessions between Claude Code, Codex, KISS, Pi, OpenClaw,
+Hermes, and OpenCode.
 
-Janus converts each harness's native JSONL records and keeps paired sessions in
-sync. Use it for one import, one bidirectional sync, or a small background
-service. The result stays resumable in both tools.
+Janus converts each harness's native JSONL or SQLite records and keeps session
+groups in sync. Use it for one import, one bidirectional sync, or a small
+background service. The result stays resumable in each installed harness.
 
 ## Why Janus
 
-- **Keep context:** continue the same task in Claude Code or Codex.
+- **Keep context:** continue the same task in any supported harness.
 - **Work both ways:** copy new user and assistant messages in each direction.
 - **Stay native:** produce normal session files for each harness.
 - **Use little memory:** stream JSONL in bounded blocks instead of loading a
@@ -33,6 +34,12 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/rac
 The installer detects the operating system, processor, and Linux C library. It
 downloads the correct release, verifies its SHA-256 checksum, and installs
 `janus` in the user binary directory.
+
+Update an installed release from GitHub Releases:
+
+```bash
+janus update
+```
 
 ## Quick start
 
@@ -70,18 +77,27 @@ codex resume SESSION_UUID
 
 ## Choose data locations
 
-Janus uses the standard Claude Code and Codex session folders by default. You
-can set every path:
+Janus enables each harness whose standard session store exists. You can set
+each path:
 
 ```bash
 janus sync \
   --claude-root ~/.claude/projects \
   --codex-root ~/.codex/sessions \
+  --kiss-root ~/.kiss/agent/sessions \
+  --pi-root ~/.pi/agent/sessions \
+  --openclaw-root ~/.openclaw/agents \
+  --hermes-db ~/.hermes/state.db \
+  --opencode-db ~/.local/share/opencode/opencode.db \
   --state ~/.local/state/janus/pairs.tsv
 ```
 
-The pair index prevents an import loop. A process lock prevents two Janus
+The group index prevents an import loop. A process lock prevents two Janus
 processes from changing the same index.
+
+An imported session keeps its origin in the native session name. For example,
+a Claude session becomes `[claude]: Fix login` in each target harness. Janus
+keeps an existing origin prefix when it sends the session to another harness.
 
 ## Performance
 
@@ -127,36 +143,37 @@ runtime. macOS files support Intel and Apple silicon.
 
 - New peers use atomic file creation.
 - Updates append complete JSONL records. Janus does not rewrite old records.
-- The state file stores paths and file sizes, not message text.
+- SQLite updates use short transactions and bound message values.
+- The state file stores locations, IDs, and change stamps, not message text.
 - Equal repeated messages remain distinct while replay loops are removed.
 - One JSONL record can use at most 8 MiB. Janus skips larger records.
 - Tool calls and results become plain context text.
 - Hidden reasoning, system instructions, token data, images, and live tool
   state are not copied.
 
-Stop both harnesses before the first large import. Back up session folders
-before you use any third-party session converter. Claude Code and Codex do not
-publish a shared lock or a stable cross-harness session format.
+Stop active harnesses before the first large import. Back up session folders
+and databases before you use any third-party session converter. The supported
+harnesses do not publish a shared lock or a stable cross-harness session format.
 
 ## How it works
 
-1. Discovery finds Claude Code and Codex JSONL files.
+1. Discovery finds native JSONL files and SQLite session rows.
 2. A harness adapter converts each record to a small message value.
 3. XXH3 128-bit fingerprints find messages that the peer already has.
 4. The target adapter appends native records with valid IDs and parent links.
-5. The pair index stores paths and file sizes for the next sync.
+5. The group index stores session locations and change stamps for the next sync.
 
 The code follows the same pipeline:
 
 - `jsonl` owns bounded input, output, time, and ID helpers.
-- `adapters` reads and writes both formats with simdjson.
+- `adapters` reads and writes all formats with simdjson and SQLite.
 - `sync` owns discovery, state, locking, import, and daemon setup.
 - `benchmark` owns the smoke test and synthetic benchmarks.
 - `main` defines the CLI with CLI11.
 
 The adapters follow the current readers in Claude Code
 `src/utils/sessionStorage.ts` and Codex `codex-rs/rollout`. These internal
-formats can change. Run `janus self-test` after a harness upgrade.
+formats can change. Maintainers must run `just test` after a harness upgrade.
 
 ## Develop
 

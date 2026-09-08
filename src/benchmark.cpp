@@ -1,10 +1,8 @@
 #include "janus/benchmark.hpp"
 
 #include <chrono>
-#include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <stdexcept>
 
 #include "janus/adapters.hpp"
 
@@ -31,39 +29,6 @@ class TemporaryDirectory {
 
 }  // namespace
 
-void self_test() {
-  TemporaryDirectory temporary("janus-test");
-  const fs::path base = temporary.path();
-  fs::create_directories(base / "claude/project");
-  fs::create_directories(base / "codex");
-  const fs::path claude = base / "claude/project/source.jsonl";
-  {
-    std::ofstream output(claude);
-    output << "{\"type\":\"user\",\"uuid\":\"u1\",\"parentUuid\":null,\"sessionId\":\"source\","
-              "\"cwd\":\"/tmp/work\",\"timestamp\":\"2026-01-01T00:00:00Z\","
-              "\"message\":{\"role\":\"user\",\"content\":\"hello\"}}\n"
-           << "{\"type\":\"assistant\",\"uuid\":\"u2\",\"parentUuid\":\"u1\","
-              "\"sessionId\":\"source\",\"cwd\":\"/tmp/work\","
-              "\"timestamp\":\"2026-01-01T00:00:01Z\",\"message\":{\"role\":\"assistant\","
-              "\"content\":[{\"type\":\"text\",\"text\":\"world\"}]}}\n";
-  }
-  const fs::path codex = create_peer(base / "codex", claude, Harness::claude);
-  std::size_t codex_messages = 0;
-  const Session parsed =
-      scan_session(codex, Harness::codex, [&](const Message&) { ++codex_messages; });
-  if (codex_messages != 2 || parsed.cwd != "/tmp/work") {
-    throw std::runtime_error("Codex adapter test failed");
-  }
-  const fs::path round_trip = create_peer(base / "claude", codex, Harness::codex);
-  std::size_t claude_messages = 0;
-  scan_session(round_trip, Harness::claude, [&](const Message&) { ++claude_messages; });
-  if (claude_messages != 2) throw std::runtime_error("Claude adapter test failed");
-  if (copy_missing(claude, Harness::claude, codex, Harness::codex) != 0) {
-    throw std::runtime_error("deduplication test failed");
-  }
-  std::cout << "self-test passed\n";
-}
-
 void benchmark(std::size_t message_count, bool header) {
   TemporaryDirectory temporary("janus-benchmark");
   const fs::path claude_root = temporary.path() / "claude";
@@ -71,7 +36,7 @@ void benchmark(std::size_t message_count, bool header) {
   fs::create_directories(claude_root / "project");
   fs::create_directories(codex_root);
   const fs::path claude = claude_root / "project/source.jsonl";
-  Session source{"benchmark", "/tmp/janus-benchmark", {}, 0, {}};
+  Session source{"benchmark", "/tmp/janus-benchmark", {}, 0, {}, {}};
   {
     Appender output(claude);
     const std::string payload(240, 'x');

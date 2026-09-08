@@ -48,11 +48,4 @@ struct Group {
   std::vector<SessionRef> members;
 };
 
-struct Pair {
-  fs::path claude;
-  fs::path codex;
-  std::uintmax_t claude_size = 0;
-  std::uintmax_t codex_size = 0;
-};
-
 }  // namespace janus

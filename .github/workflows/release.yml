@@ -64,7 +64,7 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           docker run --rm -e ASSET -e VERSION -v "$PWD:/src" -w /src alpine:3.22 sh -lc '
-            apk add --no-cache bash build-base git linux-headers &&
+            apk add --no-cache bash build-base git linux-headers sqlite-dev sqlite-static &&
             git clone --depth 1 --branch v2.7.2 https://github.com/CLIUtils/CLI11 /tmp/CLI11 &&
             git clone --depth 1 --branch v4.6.8 https://github.com/simdjson/simdjson /tmp/simdjson &&
             git clone --depth 1 --branch v0.8.3 https://github.com/Cyan4973/xxHash /tmp/xxhash &&
@@ -109,8 +109,8 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart("v")
           $env:JANUS_VERSION = $version
           xmake f -c -m release -a "${{ matrix.arch }}" -y
-          xmake build janus
-          ./dist/janus.exe self-test
+          xmake build janus janus-tests
+          xmake run janus-tests
           Compress-Archive -Path dist/janus.exe,README.md,LICENSE -DestinationPath "dist/${{ matrix.asset }}.zip"
           $hash = (Get-FileHash "dist/${{ matrix.asset }}.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  ${{ matrix.asset }}.zip" | Set-Content "dist/${{ matrix.asset }}.zip.sha256"

@@ -42,59 +42,128 @@ void daemonize_process() {
 }
 
 Syncer::Syncer(fs::path claude_root, fs::path codex_root, fs::path state)
-    : claude_root_(std::move(claude_root)),
-      codex_root_(std::move(codex_root)),
+    : stores_{{Harness::claude, std::move(claude_root)}, {Harness::codex, std::move(codex_root)}},
       state_(std::move(state)) {}
+
+Syncer::Syncer(const Options& options) : state_(options.state) {
+  const auto add_directory = [&](Harness harness, const fs::path& path) {
+    if (fs::is_directory(path)) stores_.push_back({harness, path});
+  };
+  const auto add_database = [&](Harness harness, const fs::path& path) {
+    if (fs::is_regular_file(path)) stores_.push_back({harness, path});
+  };
+  add_directory(Harness::claude, options.claude_root);
+  add_directory(Harness::codex, options.codex_root);
+  add_directory(Harness::kiss, options.kiss_root);
+  add_directory(Harness::pi, options.pi_root);
+  if (fs::is_regular_file(options.openclaw_root)) {
+    add_database(Harness::openclaw, options.openclaw_root);
+  } else if (fs::is_directory(options.openclaw_root)) {
+    const fs::path main_database = options.openclaw_root / "main/agent/openclaw-agent.sqlite";
+    if (fs::is_regular_file(main_database)) {
+      add_database(Harness::openclaw, main_database);
+    } else {
+      std::vector<fs::path> databases;
+      std::error_code error;
+      for (fs::recursive_directory_iterator iterator(
+               options.openclaw_root, fs::directory_options::skip_permission_denied, error),
+           end;
+           iterator != end; iterator.increment(error)) {
+        if (!error && iterator->is_regular_file(error) &&
+            iterator->path().filename() == "openclaw-agent.sqlite") {
+          databases.push_back(iterator->path());
+        }
+        error.clear();
+      }
+      if (!databases.empty()) {
+        std::ranges::sort(databases);
+        add_database(Harness::openclaw, databases.front());
+      }
+    }
+  }
+  add_database(Harness::hermes, options.hermes_db);
+  add_database(Harness::opencode, options.opencode_db);
+}
 
 fs::path Syncer::import_one(const fs::path& source, Harness source_harness) {
   if (!fs::is_regular_file(source)) {
     throw std::runtime_error("session file does not exist: " + source.string());
   }
   load_pairs();
+  const Session metadata = scan_session(source, source_harness);
+  SessionRef source_reference{source_harness, source, metadata.id,
+                              static_cast<std::uint64_t>(fs::file_size(source))};
   const std::string source_name = normal(source);
-  for (const Pair& pair : pairs_) {
-    if (source_harness == Harness::claude && normal(pair.claude) == source_name) return pair.codex;
-    if (source_harness == Harness::codex && normal(pair.codex) == source_name) return pair.claude;
+  for (const Group& group : groups_) {
+    for (const SessionRef& member : group.members) {
+      if (member.harness == source_harness && normal(member.store) == source_name) {
+        for (const SessionRef& peer : group.members)
+          if (peer.harness != source_harness) return peer.store;
+      }
+    }
   }
-  const fs::path target = create_peer(
-      source_harness == Harness::claude ? codex_root_ : claude_root_, source, source_harness);
-  if (source_harness == Harness::claude)
-    add_pair(source, target);
-  else
-    add_pair(target, source);
+  Group group{make_uuid(), {source_reference}};
+  fs::path result;
+  for (const Store& store : stores_) {
+    if (store.harness == source_harness) continue;
+    SessionRef peer = create_peer(store, source_reference);
+    if (result.empty()) result = peer.store;
+    group.members.push_back(std::move(peer));
+  }
+  if (result.empty()) throw std::runtime_error("no target harness store is available");
+  add_group(std::move(group));
   save_pairs();
-  return target;
+  return result;
 }
 
 std::size_t Syncer::sync() {
   load_pairs();
   std::size_t changes = 0;
-  for (const fs::path& path : discover(claude_root_, Harness::claude)) {
-    if (known_.contains(normal(path)) || !has_messages(path, Harness::claude)) continue;
-    const fs::path target = create_peer(codex_root_, path, Harness::claude);
-    add_pair(path, target);
-    ++changes;
-    std::cout << "created Codex session " << target.string() << '\n';
-  }
-  for (const fs::path& path : discover(codex_root_, Harness::codex)) {
-    if (known_.contains(normal(path)) || !has_messages(path, Harness::codex)) continue;
-    const fs::path target = create_peer(claude_root_, path, Harness::codex);
-    add_pair(target, path);
-    ++changes;
-    std::cout << "created Claude session " << target.string() << '\n';
-  }
-  for (Pair& pair : pairs_) {
-    if (!fs::exists(pair.claude) || !fs::exists(pair.codex)) continue;
-    const std::uintmax_t claude_size = fs::file_size(pair.claude);
-    const std::uintmax_t codex_size = fs::file_size(pair.codex);
-    if (claude_size != pair.claude_size) {
-      changes += copy_missing(pair.claude, Harness::claude, pair.codex, Harness::codex);
+  for (const Store& store : stores_) {
+    for (SessionRef source : discover_sessions(store)) {
+      const std::string key =
+          std::string(harness_name(source.harness)) + ':' + normal(source.store) + ':' + source.id;
+      if (known_.contains(key) || !has_messages(source)) continue;
+      Group group{make_uuid(), {source}};
+      for (const Store& target : stores_) {
+        if (target.harness == source.harness) continue;
+        SessionRef peer = create_peer(target, source);
+        std::cout << "created " << harness_name(target.harness) << " session " << peer.id << '\n';
+        group.members.push_back(std::move(peer));
+        ++changes;
+      }
+      add_group(std::move(group));
     }
-    if (codex_size != pair.codex_size) {
-      changes += copy_missing(pair.codex, Harness::codex, pair.claude, Harness::claude);
+  }
+  for (Group& group : groups_) {
+    for (const Store& store : stores_) {
+      if (std::ranges::any_of(group.members, [&](const SessionRef& member) {
+            return member.harness == store.harness;
+          }))
+        continue;
+      const auto source = std::ranges::find_if(
+          group.members, [](const SessionRef& member) { return fs::exists(member.store); });
+      if (source == group.members.end()) break;
+      SessionRef peer = create_peer(store, *source);
+      known_.insert(std::string(harness_name(peer.harness)) + ':' + normal(peer.store) + ':' +
+                    peer.id);
+      std::cout << "created " << harness_name(store.harness) << " session " << peer.id << '\n';
+      group.members.push_back(std::move(peer));
+      ++changes;
     }
-    pair.claude_size = fs::file_size(pair.claude);
-    pair.codex_size = fs::file_size(pair.codex);
+    bool changed = false;
+    for (SessionRef& member : group.members) {
+      if (!fs::exists(member.store)) continue;
+      if (session_stamp(member) != member.stamp) changed = true;
+    }
+    if (!changed) continue;
+    for (const SessionRef& source : group.members) {
+      if (!fs::exists(source.store)) continue;
+      for (const SessionRef& target : group.members) {
+        if (&source != &target && fs::exists(target.store)) changes += copy_missing(source, target);
+      }
+    }
+    for (SessionRef& member : group.members) member.stamp = session_stamp(member);
   }
   save_pairs();
   return changes;
@@ -104,64 +173,61 @@ std::string Syncer::normal(const fs::path& path) {
   return fs::absolute(path).lexically_normal().string();
 }
 
-bool Syncer::has_messages(const fs::path& path, Harness harness) {
+bool Syncer::has_messages(const SessionRef& session) {
   bool found = false;
-  scan_session(path, harness, [&](const Message&) { found = true; });
+  scan_session(session, [&](const Message&) { found = true; });
   return found;
 }
 
-std::vector<fs::path> Syncer::discover(const fs::path& root, Harness harness) {
-  std::vector<fs::path> paths;
-  if (!fs::exists(root)) return paths;
-  std::error_code error;
-  for (fs::recursive_directory_iterator
-           iterator(root, fs::directory_options::skip_permission_denied, error),
-       end;
-       iterator != end; iterator.increment(error)) {
-    if (error) {
-      error.clear();
-      continue;
-    }
-    if (!iterator->is_regular_file(error) || iterator->path().extension() != ".jsonl") continue;
-    const std::string name = iterator->path().filename().string();
-    if (harness == Harness::codex ? name.starts_with("rollout-")
-                                  : name != "skill-injections.jsonl") {
-      paths.push_back(iterator->path());
-    }
-  }
-  std::ranges::sort(paths);
-  return paths;
-}
-
 void Syncer::load_pairs() {
-  if (!pairs_.empty() || !fs::exists(state_)) return;
+  if (!groups_.empty() || !fs::exists(state_)) return;
   std::ifstream input(state_);
   for (std::string line; std::getline(input, line);) {
-    const std::size_t first = line.find('\t');
-    if (first == std::string::npos) continue;
-    const std::size_t second = line.find('\t', first + 1);
-    const std::size_t third = second == std::string::npos ? second : line.find('\t', second + 1);
-    const fs::path claude = line.substr(0, first);
-    const fs::path codex = line.substr(first + 1, second - first - 1);
-    const std::uintmax_t claude_size =
-        second == std::string::npos ? 0 : std::stoull(line.substr(second + 1, third - second - 1));
-    const std::uintmax_t codex_size =
-        third == std::string::npos ? 0 : std::stoull(line.substr(third + 1));
-    if (fs::exists(claude) && fs::exists(codex)) {
-      add_pair(claude, codex, claude_size, codex_size);
+    std::vector<std::string> fields;
+    for (std::size_t begin = 0;;) {
+      const std::size_t end = line.find('\t', begin);
+      fields.push_back(line.substr(begin, end - begin));
+      if (end == std::string::npos) break;
+      begin = end + 1;
+    }
+    if (fields.size() == 4) {
+      const fs::path claude = fields[0];
+      const fs::path codex = fields[1];
+      if (!fs::exists(claude) || !fs::exists(codex)) continue;
+      const Session claude_session = scan_session(claude, Harness::claude);
+      const Session codex_session = scan_session(codex, Harness::codex);
+      groups_.push_back({make_uuid(),
+                         {{Harness::claude, claude, claude_session.id, std::stoull(fields[2])},
+                          {Harness::codex, codex, codex_session.id, std::stoull(fields[3])}}});
+    } else if (fields.size() == 6 && fields[0] == "v2") {
+      Group* group = nullptr;
+      for (Group& candidate : groups_)
+        if (candidate.id == fields[1]) group = &candidate;
+      if (group == nullptr) {
+        groups_.push_back({fields[1], {}});
+        group = &groups_.back();
+      }
+      SessionRef member{parse_harness(fields[2]), fields[3], fields[4], std::stoull(fields[5])};
+      if (fs::exists(member.store)) group->members.push_back(std::move(member));
     }
   }
+  std::vector<Group> loaded = std::move(groups_);
+  groups_.clear();
+  known_.clear();
+  for (Group& group : loaded) add_group(std::move(group));
 }
 
-void Syncer::add_pair(const fs::path& claude, const fs::path& codex, std::uintmax_t claude_size,
-                      std::uintmax_t codex_size) {
-  const std::string left = normal(claude);
-  const std::string right = normal(codex);
-  if (known_.contains(left) || known_.contains(right)) return;
-  pairs_.push_back({left, right, claude_size == UINTMAX_MAX ? fs::file_size(claude) : claude_size,
-                    codex_size == UINTMAX_MAX ? fs::file_size(codex) : codex_size});
-  known_.insert(left);
-  known_.insert(right);
+void Syncer::add_group(Group group) {
+  for (const SessionRef& member : group.members) {
+    const std::string key =
+        std::string(harness_name(member.harness)) + ':' + normal(member.store) + ':' + member.id;
+    if (known_.contains(key)) return;
+  }
+  for (const SessionRef& member : group.members) {
+    known_.insert(std::string(harness_name(member.harness)) + ':' + normal(member.store) + ':' +
+                  member.id);
+  }
+  groups_.push_back(std::move(group));
 }
 
 void Syncer::save_pairs() const {
@@ -170,11 +236,16 @@ void Syncer::save_pairs() const {
   {
     std::ofstream output(temporary, std::ios::trunc);
     if (!output) throw std::runtime_error("cannot write " + temporary.string());
-    for (const Pair& pair : pairs_) {
-      output << pair.claude.string() << '\t' << pair.codex.string() << '\t' << pair.claude_size
-             << '\t' << pair.codex_size << '\n';
+    for (const Group& group : groups_) {
+      for (const SessionRef& member : group.members) {
+        output << "v2\t" << group.id << '\t' << harness_name(member.harness) << '\t'
+               << member.store.string() << '\t' << member.id << '\t' << member.stamp << '\n';
+      }
     }
   }
+#ifdef _WIN32
+  fs::remove(state_);
+#endif
   fs::rename(temporary, state_);
 }
 

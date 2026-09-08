@@ -16,22 +16,22 @@ trap cleanup EXIT
 
 configure() {
   xmake f -c -m release -y --cxflags="$1" --ldflags="$1"
-  xmake build janus
+  xmake build janus janus-benchmark janus-tests
 }
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   export LLVM_PROFILE_FILE="$profile_dir/janus-%p.profraw"
   configure "-fprofile-instr-generate"
-  ./dist/janus benchmark 50000 >/dev/null
+  ./dist/janus-benchmark 50000 >/dev/null
   xcrun llvm-profdata merge -output="$profile_dir/janus.profdata" "$profile_dir"/*.profraw
   configure "-fprofile-instr-use=$profile_dir/janus.profdata"
 else
   configure "-fprofile-generate=$profile_dir"
-  ./dist/janus benchmark 50000 >/dev/null
+  ./dist/janus-benchmark 50000 >/dev/null
   configure "-fprofile-use=$profile_dir -fprofile-correction -Wno-missing-profile"
 fi
 
-./dist/janus self-test
+./dist/janus-tests
 strip dist/janus
 tar -czf "dist/$asset.tar.gz" -C dist janus -C .. README.md LICENSE
 if command -v sha256sum >/dev/null 2>&1; then

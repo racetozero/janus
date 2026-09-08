@@ -454,7 +454,7 @@ Session scan_session(const SessionRef& reference, const MessageFunction& on_mess
     Session session = scan_session(reference.store, reference.harness, on_message);
     if (reference.harness == Harness::codex) {
       const fs::path index_path =
-          reference.store.parent_path().parent_path().parent_path().parent_path() /
+          reference.store.parent_path().parent_path().parent_path().parent_path().parent_path() /
           "session_index.jsonl";
       if (fs::exists(index_path)) {
         simdjson::dom::parser parser;
@@ -594,6 +594,49 @@ std::uint64_t session_stamp(const SessionRef& reference) {
   Statement query = database.prepare(sql);
   query.bind(1, reference.id);
   return query.row() ? static_cast<std::uint64_t>(query.integer(0)) : 0;
+}
+
+std::vector<SessionRef> discover_sessions(const Store& store) {
+  std::vector<SessionRef> sessions;
+  if (!fs::exists(store.path)) return sessions;
+  if (!is_database_harness(store.harness)) {
+    std::error_code error;
+    for (fs::recursive_directory_iterator
+             iterator(store.path, fs::directory_options::skip_permission_denied, error),
+         end;
+         iterator != end; iterator.increment(error)) {
+      if (error) {
+        error.clear();
+        continue;
+      }
+      if (!iterator->is_regular_file(error) || iterator->path().extension() != ".jsonl") continue;
+      const std::string name = iterator->path().filename().string();
+      if (store.harness == Harness::claude && name == "skill-injections.jsonl") continue;
+      if (store.harness == Harness::codex && !name.starts_with("rollout-")) continue;
+      Session session = scan_session(iterator->path(), store.harness);
+      if (!session.id.empty()) {
+        sessions.push_back({store.harness, iterator->path(), session.id,
+                            static_cast<std::uint64_t>(iterator->file_size())});
+      }
+    }
+    std::ranges::sort(sessions, {}, [](const SessionRef& session) { return session.store; });
+    return sessions;
+  }
+
+  Database database(store.path);
+  const char* sql = store.harness == Harness::hermes
+                        ? "SELECT id FROM sessions WHERE archived = 0 AND hidden = 0"
+                    : store.harness == Harness::opencode
+                        ? "SELECT id FROM session WHERE time_archived IS NULL AND parent_id IS NULL"
+                        : "SELECT session_id FROM session_windows WHERE ended_at IS NULL";
+  Statement query = database.prepare(sql);
+  while (query.row()) {
+    SessionRef session{store.harness, store.path, query.text(0), 0};
+    session.stamp = session_stamp(session);
+    sessions.push_back(std::move(session));
+  }
+  std::ranges::sort(sessions, {}, [](const SessionRef& session) { return session.id; });
+  return sessions;
 }
 
 std::string imported_title(Harness origin, const Session& source) {

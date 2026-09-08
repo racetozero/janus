@@ -11,12 +11,15 @@ build: setup
 
 test: build
     xmake test
+    tests/test_cli.sh dist/janus
 
-benchmark: build
-    xmake run janus benchmark 10000
+benchmark: setup
+    VCPKG_ROOT="{{vcpkg_root}}" xmake build janus-benchmark
+    xmake run janus-benchmark 10000
 
-benchmark-suite: build
-    xmake run janus benchmark-suite
+benchmark-suite: setup
+    VCPKG_ROOT="{{vcpkg_root}}" xmake build janus-benchmark
+    xmake run janus-benchmark --suite
 
 fmt:
     clang-format -i src/*.cpp include/janus/*.hpp tests/*.cpp

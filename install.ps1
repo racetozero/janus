@@ -46,12 +46,13 @@ try {
     if (-not $Version -or $Version -eq "latest") {
         if ($env:JANUS_RELEASES_URL) {
             Fail "set JANUS_VERSION when JANUS_RELEASES_URL is set"
-        }
-        try {
-            $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/latest"
-            $Version = $Release.tag_name
-        } catch {
-            Fail "could not find the latest release"
+        } else {
+            try {
+                $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/latest"
+                $Version = $Release.tag_name
+            } catch {
+                Fail "could not find the latest release; authenticate gh for a private repository"
+            }
         }
     }
     $Tag, $PlainVersion = Normalize-Tag $Version

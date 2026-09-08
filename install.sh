@@ -47,6 +47,14 @@ resolve_tag() {
     normalize_tag "$resolved"
 }
 
+download_release() {
+    asset_base="$RELEASES_URL/download/$tag"
+    download_file "$asset_base/$archive_name" "$temporary_directory/$archive_name" ||
+        fail "could not download $archive_name"
+    download_file "$asset_base/$checksum_name" "$temporary_directory/$checksum_name" ||
+        fail "could not download $checksum_name"
+}
+
 detect_target() {
     if [ -n "${JANUS_TARGET:-}" ]; then
         target="$JANUS_TARGET"
@@ -161,12 +169,8 @@ resolve_tag
 detect_target
 archive_name="janus-$target.tar.gz"
 checksum_name="$archive_name.sha256"
-asset_base="$RELEASES_URL/download/$tag"
 
 say "Installing janus $version for $target"
-download_file "$asset_base/$archive_name" "$temporary_directory/$archive_name" ||
-    fail "could not download $archive_name"
-download_file "$asset_base/$checksum_name" "$temporary_directory/$checksum_name" ||
-    fail "could not download $checksum_name"
+download_release
 verify_archive
 install_binary
