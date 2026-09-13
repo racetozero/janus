@@ -79,5 +79,7 @@ jobs:
       - name: Run Cppcheck
         run: >-
           cppcheck --project=compile_commands.json
+          --file-filter='src/*'
           --enable=warning,style,performance,portability
-          --inconclusive --suppress=missingIncludeSystem --error-exitcode=1
+          --inconclusive --suppress=missingIncludeSystem --suppress='*:vcpkg/*'
+          --error-exitcode=1

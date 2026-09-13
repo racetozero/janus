@@ -26,7 +26,7 @@ lint: setup
     VCPKG_ROOT="{{vcpkg_root}}" xmake
     VCPKG_ROOT="{{vcpkg_root}}" xmake project -k compile_commands
     clang-tidy --warnings-as-errors='clang-analyzer-*,cppcoreguidelines-owning-memory' -p=. src/*.cpp
-    cppcheck --project=compile_commands.json --enable=warning,style,performance,portability --inconclusive --suppress=missingIncludeSystem --error-exitcode=1
+    cppcheck --project=compile_commands.json --file-filter='src/*' --enable=warning,style,performance,portability --inconclusive --suppress=missingIncludeSystem --suppress='*:vcpkg/*' --error-exitcode=1
 
 asan: setup
     VCPKG_ROOT="{{vcpkg_root}}" xmake f -m debug -y --toolchain=clang --cxflags="-DNDEBUG -fsanitize=address,undefined -fno-omit-frame-pointer" --ldflags="-fsanitize=address,undefined"
