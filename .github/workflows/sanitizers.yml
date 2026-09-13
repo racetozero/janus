@@ -64,7 +64,7 @@ jobs:
       - name: Build with AddressSanitizer
         shell: pwsh
         run: |
-          xmake f -m debug -y --cxflags="/DNDEBUG /fsanitize=address"
+          xmake f -m debug -y --policies=build.sanitizer.address --cxflags="/DNDEBUG"
           xmake
       - name: Run tests with AddressSanitizer
         run: xmake test
