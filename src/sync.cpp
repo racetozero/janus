@@ -213,7 +213,8 @@ void Syncer::load_pairs() {
       if (fs::exists(member.store)) group->members.push_back(std::move(member));
     }
   }
-  std::vector<Group> loaded = std::move(groups_);
+  std::vector<Group> loaded;
+  loaded.swap(groups_);
   known_.clear();
   for (Group& group : loaded) add_group(std::move(group));
 }
