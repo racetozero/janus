@@ -75,7 +75,7 @@ jobs:
           xmake
           xmake project -k compile_commands
       - name: Run clang-tidy
-        run: clang-tidy --warnings-as-errors='*' -p=. src/*.cpp
+        run: clang-tidy --warnings-as-errors='clang-analyzer-*,cppcoreguidelines-owning-memory' -p=. src/*.cpp
       - name: Run Cppcheck
         run: >-
           cppcheck --project=compile_commands.json

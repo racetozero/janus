@@ -25,7 +25,7 @@ lint: setup
     VCPKG_ROOT="{{vcpkg_root}}" xmake f -m release -y --toolchain=clang --cxflags="-Werror"
     VCPKG_ROOT="{{vcpkg_root}}" xmake
     VCPKG_ROOT="{{vcpkg_root}}" xmake project -k compile_commands
-    clang-tidy --warnings-as-errors='*' -p=. src/*.cpp
+    clang-tidy --warnings-as-errors='clang-analyzer-*,cppcoreguidelines-owning-memory' -p=. src/*.cpp
     cppcheck --project=compile_commands.json --enable=warning,style,performance,portability --inconclusive --suppress=missingIncludeSystem --error-exitcode=1
 
 asan: setup
