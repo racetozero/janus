@@ -60,7 +60,7 @@ Move sessions between AI coding harnesses)",
         ->check(CLI::PositiveNumber);
     serve.add_flag("--daemonize", serve_options.daemonize, "Run in the background");
 
-    CLI::App& update = *app.add_subcommand("update", "Update Janus from GitHub Releases");
+    const CLI::App& update = *app.add_subcommand("update", "Update Janus from GitHub Releases");
 
     if (argc == 1) {
       std::cout << app.help();

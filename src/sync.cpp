@@ -214,7 +214,6 @@ void Syncer::load_pairs() {
     }
   }
   std::vector<Group> loaded = std::move(groups_);
-  groups_.clear();
   known_.clear();
   for (Group& group : loaded) add_group(std::move(group));
 }
