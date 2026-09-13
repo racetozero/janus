@@ -1,5 +1,5 @@
 set_project("janus")
-set_version("0.0.2")
+set_version("0.0.3")
 set_languages("c++23")
 set_policy("build.ccache", true)
 
@@ -25,7 +25,7 @@ target("janus")
     if is_plat("windows") then
         add_syslinks("shell32")
     end
-    add_defines('JANUS_VERSION="' .. (os.getenv("JANUS_VERSION") or "0.0.2") .. '"')
+    add_defines('JANUS_VERSION="' .. (os.getenv("JANUS_VERSION") or "0.0.3") .. '"')
     if is_mode("release") then
         set_policy("build.optimization.lto", true)
     end
