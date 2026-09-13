@@ -191,7 +191,16 @@ just test
 just benchmark
 just benchmark-suite
 just fmt
+just lint
+just asan
+just tsan
+just fuzz
 ```
+
+`just lint` runs Clang-Tidy and Cppcheck. `just asan` runs AddressSanitizer
+and UndefinedBehaviorSanitizer. `just tsan` runs ThreadSanitizer. `just fuzz`
+runs the JSON quoting fuzz test. These checks need the matching local tools;
+the same checks run in GitHub Actions.
 
 Dependencies have one direct purpose: CLI11 parses commands, simdjson parses
 JSON, xxHash creates fingerprints, and Catch2 runs tests.

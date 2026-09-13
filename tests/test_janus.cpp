@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <fstream>
+#include <stdexcept>
 
 #include "janus/adapters.hpp"
 #include "janus/sync.hpp"
@@ -55,6 +56,16 @@ janus::SessionRef source_ref(const janus::fs::path& path) {
 }  // namespace
 
 TEST_CASE("JSON strings are escaped") { REQUIRE(janus::quote("a\n\"b\\") == "\"a\\n\\\"b\\\\\""); }
+
+TEST_CASE("process lock excludes another owner") {
+  TestDirectory temporary;
+  const auto state = temporary.path() / "state/pairs.tsv";
+  {
+    janus::ProcessLock first(state);
+    REQUIRE_THROWS_AS(janus::ProcessLock(state), std::runtime_error);
+  }
+  REQUIRE_NOTHROW(janus::ProcessLock(state));
+}
 
 TEST_CASE("imported titles identify the original harness") {
   janus::Session source;

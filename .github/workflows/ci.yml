@@ -53,3 +53,31 @@ jobs:
         run: xmake f -m release -y && xmake
       - name: Test
         run: xmake test
+
+  static-analysis:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a
+        with:
+          xmake-version: 3.1.1
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgJsonGlob: vcpkg.json
+          vcpkgGitCommitId: 04a9d8e5212d01ee1dd9478eadd9caade8f4b0d4
+          runVcpkgInstall: true
+          doNotCache: false
+      - name: Install analysis tools
+        run: sudo apt-get update && sudo apt-get install --yes clang clang-tidy cppcheck
+      - name: Build and export compilation database
+        run: |
+          xmake f -m release -y --toolchain=clang --cxflags="-Werror"
+          xmake
+          xmake project -k compile_commands
+      - name: Run clang-tidy
+        run: clang-tidy --warnings-as-errors='*' -p=. src/*.cpp
+      - name: Run Cppcheck
+        run: >-
+          cppcheck --project=compile_commands.json
+          --enable=warning,style,performance,portability
+          --inconclusive --suppress=missingIncludeSystem --error-exitcode=1

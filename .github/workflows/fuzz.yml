@@ -1,0 +1,27 @@
+name: Fuzz
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "47 3 * * 6"
+
+permissions:
+  contents: read
+
+jobs:
+  quote:
+    name: Fuzz JSON quoting
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install Clang
+        run: sudo apt-get update && sudo apt-get install --yes clang
+      - name: Build fuzz target
+        run: |
+          mkdir -p build
+          clang++ -std=c++23 -fsanitize=fuzzer,address -fno-omit-frame-pointer \
+            -Iinclude fuzz/fuzz_quote.cpp src/jsonl.cpp -o build/fuzz_quote
+      - name: Run fuzz target
+        run: timeout 60s ./build/fuzz_quote -runs=10000

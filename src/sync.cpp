@@ -12,6 +12,8 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
+#else
+#include <windows.h>
 #endif
 
 namespace janus {
@@ -251,8 +253,15 @@ void Syncer::save_pairs() const {
 
 ProcessLock::ProcessLock(const fs::path& state) {
   fs::create_directories(state.parent_path());
-#ifndef _WIN32
   const fs::path path = state.string() + ".lock";
+#ifdef _WIN32
+  const HANDLE handle = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                    OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (handle == INVALID_HANDLE_VALUE) {
+    throw std::runtime_error("another Janus process uses this state file");
+  }
+  handle_ = handle;
+#else
   descriptor_ = ::open(path.c_str(), O_CREAT | O_RDWR, 0600);
   if (descriptor_ < 0 || ::flock(descriptor_, LOCK_EX | LOCK_NB) != 0) {
     if (descriptor_ >= 0) ::close(descriptor_);
@@ -262,7 +271,9 @@ ProcessLock::ProcessLock(const fs::path& state) {
 }
 
 ProcessLock::~ProcessLock() {
-#ifndef _WIN32
+#ifdef _WIN32
+  if (handle_ != nullptr) CloseHandle(static_cast<HANDLE>(handle_));
+#else
   if (descriptor_ >= 0) ::close(descriptor_);
 #endif
 }

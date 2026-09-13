@@ -50,7 +50,9 @@ class ProcessLock {
   ~ProcessLock();
 
  private:
-#ifndef _WIN32
+#ifdef _WIN32
+  void* handle_ = nullptr;
+#else
   int descriptor_ = -1;
 #endif
 };

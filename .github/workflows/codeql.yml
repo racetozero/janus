@@ -1,0 +1,39 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "31 4 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg/installed
+
+jobs:
+  analyze:
+    name: CodeQL C++ analysis
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+      - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a
+        with:
+          xmake-version: 3.1.1
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgJsonGlob: vcpkg.json
+          vcpkgGitCommitId: 04a9d8e5212d01ee1dd9478eadd9caadef8b0d4
+          runVcpkgInstall: true
+          doNotCache: false
+      - name: Build for CodeQL
+        run: |
+          xmake f -m debug -y
+          xmake
+      - uses: github/codeql-action/analyze@v3

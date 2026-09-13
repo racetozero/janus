@@ -31,6 +31,30 @@ namespace {
 #ifdef NDEBUG
 constexpr std::string_view repository = "racetozero/janus";
 
+class Pipe {
+ public:
+  explicit Pipe(FILE* value) : value_(value) {}
+  Pipe(const Pipe&) = delete;
+  Pipe& operator=(const Pipe&) = delete;
+  ~Pipe() { close(); }
+
+  FILE* get() const { return value_; }
+
+  int close() {
+    if (value_ == nullptr) return 0;
+#ifdef _WIN32
+    const int status = _pclose(value_);
+#else
+    const int status = pclose(value_);
+#endif
+    value_ = nullptr;
+    return status;
+  }
+
+ private:
+  FILE* value_ = nullptr;
+};
+
 class TemporaryDirectory {
  public:
   TemporaryDirectory() : path_(fs::temp_directory_path() / ("janus-update-" + make_uuid())) {
@@ -82,21 +106,17 @@ std::string powershell_literal(std::string_view value) {
 
 std::string run_and_read(const std::string& command) {
 #ifdef _WIN32
-  FILE* pipe = _popen(command.c_str(), "r");
+  Pipe pipe(_popen(command.c_str(), "r"));
 #else
-  FILE* pipe = popen(command.c_str(), "r");
+  Pipe pipe(popen(command.c_str(), "r"));
 #endif
-  if (pipe == nullptr) throw std::runtime_error("could not start the update command");
+  if (pipe.get() == nullptr) throw std::runtime_error("could not start the update command");
   std::string output;
   std::array<char, 256> block{};
-  while (std::fgets(block.data(), static_cast<int>(block.size()), pipe) != nullptr) {
+  while (std::fgets(block.data(), static_cast<int>(block.size()), pipe.get()) != nullptr) {
     output += block.data();
   }
-#ifdef _WIN32
-  const int status = _pclose(pipe);
-#else
-  const int status = pclose(pipe);
-#endif
+  const int status = pipe.close();
   if (status != 0) throw std::runtime_error("the update command failed");
   while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) output.pop_back();
   return output;

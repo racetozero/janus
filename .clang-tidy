@@ -1,0 +1,13 @@
+Checks: >-
+  clang-analyzer-*,
+  bugprone-*,
+  cert-*,
+  cppcoreguidelines-owning-memory,
+  performance-*,
+  portability-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions
+WarningsAsErrors: ''
+HeaderFilterRegex: '^(include|src)/'
+FormatStyle: file
+SystemHeaders: false

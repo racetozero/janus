@@ -13,7 +13,8 @@ std::string quote(std::string_view text) {
   std::string output;
   output.reserve(text.size() + 2);
   output.push_back('"');
-  for (const unsigned char character : text) {
+  for (const char raw : text) {
+    const unsigned char character = static_cast<unsigned char>(raw);
     switch (character) {
       case '"':
         output += "\\\"";

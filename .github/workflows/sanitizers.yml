@@ -1,0 +1,70 @@
+name: Sanitizers
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg/installed
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Address and undefined behaviour
+            flags: address,undefined
+          - name: Thread
+            flags: thread
+    name: Linux - ${{ matrix.name }} sanitizer
+    runs-on: ubuntu-24.04
+    env:
+      ASAN_OPTIONS: detect_leaks=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a
+        with:
+          xmake-version: 3.1.1
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgJsonGlob: vcpkg.json
+          vcpkgGitCommitId: 04a9d8e5212d01ee1dd9478eadd9caadef8b0d4
+          runVcpkgInstall: true
+          doNotCache: false
+      - name: Install Clang
+        run: sudo apt-get update && sudo apt-get install --yes clang
+      - name: Build with sanitizer
+        run: |
+          xmake f -m debug -y --toolchain=clang \
+            --cxflags="-DNDEBUG -fsanitize=${{ matrix.flags }} -fno-omit-frame-pointer" \
+            --ldflags="-fsanitize=${{ matrix.flags }}"
+          xmake
+      - name: Run tests with sanitizer
+        run: xmake test
+
+  windows-address:
+    name: Windows - AddressSanitizer
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a
+        with:
+          xmake-version: 3.1.1
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgJsonGlob: vcpkg.json
+          vcpkgGitCommitId: 04a9d8e5212d01ee1dd9478eadd9caadef8b0d4
+          runVcpkgInstall: true
+          doNotCache: false
+      - name: Build with AddressSanitizer
+        shell: pwsh
+        run: |
+          xmake f -m debug -y --cxflags="/DNDEBUG /fsanitize=address" --ldflags="/fsanitize=address"
+          xmake
+      - name: Run tests with AddressSanitizer
+        run: xmake test
