@@ -189,7 +189,8 @@ say "Installing janus $version for $target"
 command_exists tar || fail "tar is required to extract $archive_name"
 download_release
 verify_archive
-if case "$target" in *-unknown-linux-gnu) true ;; *) false ;; esac; then
+# An explicit target can be for another processor, and a probe cannot run that binary.
+if [ -z "${JANUS_TARGET:-}" ] && case "$target" in *-unknown-linux-gnu) true ;; *) false ;; esac; then
     if verify_staged_binary; then
         :
     else

@@ -37,7 +37,8 @@ downloads the correct release, verifies its SHA-256 checksum, and installs
 
 On Linux, the installer checks that the glibc release can run. If the machine's
 glibc is older than the release requires, it automatically installs the static
-musl release instead.
+musl release instead. The installer does not do this check when you set
+`JANUS_TARGET`, because that target can be for another processor.
 
 Update an installed release from GitHub Releases:
 
@@ -71,6 +72,10 @@ Run Janus as its own background daemon on macOS or Linux:
 janus serve --daemonize --interval 2
 ```
 
+The daemon writes messages and errors to the state file path plus `.log`, by
+default `~/.local/state/janus/pairs.tsv.log`. When a sync fails, `serve` doubles
+its delay, up to 5 minutes, and returns to the interval after a good sync.
+
 Windows supports foreground service mode but not `--daemonize`. Use the normal
 tool UI to resume a generated session, or use its UUID:
 
@@ -81,8 +86,8 @@ codex resume SESSION_UUID
 
 ## Choose data locations
 
-Janus enables each harness whose standard session store exists. You can set
-each path:
+Janus enables each harness whose standard session store exists, and it checks
+again on each sync. You can set each path:
 
 ```bash
 janus sync \
@@ -106,7 +111,8 @@ keeps an existing origin prefix when it sends the session to another harness.
 ## Performance
 
 Janus first checks file sizes. An idle service check does not parse unchanged
-sessions. Changed JSONL files are read in 64 KiB blocks, and memory use does not
+JSONL sessions, but it still lists the store directories and queries each
+database. Changed JSONL files are read in 64 KiB blocks, and memory use does not
 grow with the full file size.
 
 The latest local release-mode benchmark ran on Apple ARM64. It used synthetic
@@ -145,8 +151,22 @@ runtime. macOS files support Intel and Apple silicon.
 
 ## Data and safety
 
-- New peers use atomic file creation.
-- Updates append complete JSONL records. Janus does not rewrite old records.
+- New peers use atomic file creation. Janus records each peer in the state file
+  when it creates that peer, so an interrupted sync does not create duplicates.
+- Updates append complete JSONL records. Janus does not rewrite old records. If
+  a file ends in an unfinished record, Janus waits up to 60 seconds for the
+  writer before it starts a new line.
+- A failure in one session or store does not stop the others. `janus sync`
+  finishes the other sessions, then exits with an error.
+- If you delete a session, Janus does not create it again. Run `janus import` on
+  another session in that group to create it again. Janus removes a group when
+  all of its sessions are deleted.
+- Janus does not read or write an archived, hidden, or ended session. It catches
+  up when you restore that session.
+- Janus stops with an error if a state file row is not valid, and it does not
+  change the file. Repair or delete the row that the error names.
+- Janus does not sync a session whose path or ID contains a tab or a line break,
+  because the state file cannot store it.
 - SQLite updates use short transactions and bound message values.
 - The state file stores locations, IDs, and change stamps, not message text.
 - Equal repeated messages remain distinct while replay loops are removed.
@@ -198,7 +218,8 @@ just fuzz
 ```
 
 `just lint` runs Clang-Tidy and Cppcheck. `just asan` runs AddressSanitizer
-and UndefinedBehaviorSanitizer. `just tsan` runs ThreadSanitizer. `just fuzz`
+and UndefinedBehaviorSanitizer, with leak detection on Linux only. `just tsan`
+runs ThreadSanitizer. `just fuzz`
 runs the JSON quoting fuzz test. These checks need the matching local tools;
 the same checks run in GitHub Actions.
 

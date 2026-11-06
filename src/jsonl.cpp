@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <memory>
 #include <random>
 
 namespace janus {
@@ -81,13 +82,12 @@ fs::path user_home() {
 #ifdef _WIN32
   char* value = nullptr;
   std::size_t size = 0;
-  if (_dupenv_s(&value, &size, "USERPROFILE") != 0 || value == nullptr || *value == '\0') {
-    std::free(value);
+  const int result = _dupenv_s(&value, &size, "USERPROFILE");
+  const std::unique_ptr<char, decltype(&std::free)> value_owner(value, &std::free);
+  if (result != 0 || value == nullptr || *value == '\0') {
     throw std::runtime_error("home directory is not set");
   }
-  const fs::path home(value);
-  std::free(value);
-  return home;
+  return fs::path(value);
 #else
   const char* value = std::getenv("HOME");
   if (value == nullptr || *value == '\0') throw std::runtime_error("home directory is not set");

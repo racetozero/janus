@@ -108,8 +108,14 @@ try {
         New-Item -ItemType Directory -Force -Path $InstallDirectory | Out-Null
         $Destination = Join-Path $InstallDirectory "janus.exe"
         $Staged = Join-Path $InstallDirectory (".janus.install." + [Guid]::NewGuid() + ".exe")
-        Copy-Item -LiteralPath $Binary -Destination $Staged
-        Move-Item -Force -LiteralPath $Staged -Destination $Destination
+        try {
+            Copy-Item -LiteralPath $Binary -Destination $Staged
+            Move-Item -Force -LiteralPath $Staged -Destination $Destination
+        } finally {
+            if (Test-Path -LiteralPath $Staged) {
+                Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $Staged
+            }
+        }
         Write-Host "Installed janus $PlainVersion to $Destination"
 
         if ($InstallDirectory -notin ($env:PATH -split ';')) {

@@ -1,6 +1,7 @@
 #include "janus/update.hpp"
 
 #include <array>
+#include <charconv>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +10,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -225,7 +228,12 @@ void replace_executable(const fs::path& source, const fs::path& destination) {
     throw std::runtime_error("could not move the current Janus executable");
   }
   if (!MoveFileExW(replacement.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-    MoveFileExW(old.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING);
+    if (!MoveFileExW(old.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+      throw std::runtime_error(
+          "could not install the new Janus executable and could not restore the previous one; "
+          "move " +
+          old.string() + " to " + destination.string() + " to restore Janus");
+    }
     throw std::runtime_error("could not install the new Janus executable");
   }
   MoveFileExW(old.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
@@ -238,6 +246,50 @@ void replace_executable(const fs::path& source, const fs::path& destination) {
 
 }  // namespace
 
+std::optional<int> compare_versions(std::string_view left, std::string_view right) {
+  struct Parsed {
+    std::vector<std::uint64_t> numbers;
+    std::string_view prerelease;
+  };
+  const auto parse = [](std::string_view version) -> std::optional<Parsed> {
+    Parsed parsed;
+    version = version.substr(0, version.find('+'));
+    const std::size_t dash = version.find('-');
+    if (dash != std::string_view::npos) {
+      parsed.prerelease = version.substr(dash + 1);
+      version = version.substr(0, dash);
+    }
+    while (true) {
+      const std::size_t dot = version.find('.');
+      const std::string_view part = version.substr(0, dot);
+      const char* const end = part.data() + part.size();
+      std::uint64_t number = 0;
+      const std::from_chars_result result = std::from_chars(part.data(), end, number);
+      if (part.empty() || result.ec != std::errc{} || result.ptr != end) return std::nullopt;
+      parsed.numbers.push_back(number);
+      if (dot == std::string_view::npos) return parsed;
+      version.remove_prefix(dot + 1);
+    }
+  };
+  const std::optional<Parsed> first = parse(left);
+  const std::optional<Parsed> second = parse(right);
+  if (!first || !second) return std::nullopt;
+  const std::size_t longest = first->numbers.size() > second->numbers.size()
+                                  ? first->numbers.size()
+                                  : second->numbers.size();
+  for (std::size_t index = 0; index < longest; ++index) {
+    const std::uint64_t a = index < first->numbers.size() ? first->numbers[index] : 0;
+    const std::uint64_t b = index < second->numbers.size() ? second->numbers[index] : 0;
+    if (a != b) return a < b ? -1 : 1;
+  }
+  // A pre-release is older than the release with the same numbers.
+  if (first->prerelease.empty() != second->prerelease.empty()) {
+    return first->prerelease.empty() ? 1 : -1;
+  }
+  const int order = first->prerelease.compare(second->prerelease);
+  return order == 0 ? 0 : (order < 0 ? -1 : 1);
+}
+
 void update() {
 #ifndef NDEBUG
   throw std::runtime_error(
@@ -246,8 +298,14 @@ void update() {
 #else
   const std::string current = JANUS_VERSION;
   const std::string latest = latest_tag();
-  if (latest == current) {
+  const std::optional<int> order = compare_versions(current, latest);
+  if (latest == current || order == 0) {
     std::cout << "janus v" << current << " is up to date.\n";
+    return;
+  }
+  if (order > 0) {
+    std::cout << "janus v" << current << " is newer than the latest release, v" << latest
+              << ". Janus made no change.\n";
     return;
   }
 

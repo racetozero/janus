@@ -31,7 +31,7 @@ lint: setup
 asan: setup
     VCPKG_ROOT="{{vcpkg_root}}" xmake f -m debug -y --toolchain=clang --cxflags="-DNDEBUG -fsanitize=address,undefined -fno-omit-frame-pointer" --ldflags="-fsanitize=address,undefined"
     VCPKG_ROOT="{{vcpkg_root}}" xmake
-    ASAN_OPTIONS=detect_leaks=1 xmake test
+    {{ if os() == "linux" { "ASAN_OPTIONS=detect_leaks=1 " } else { "" } }}xmake test
 
 tsan: setup
     VCPKG_ROOT="{{vcpkg_root}}" xmake f -m debug -y --toolchain=clang --cxflags="-DNDEBUG -fsanitize=thread -fno-omit-frame-pointer" --ldflags="-fsanitize=thread"

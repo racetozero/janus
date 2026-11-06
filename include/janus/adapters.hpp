@@ -1,12 +1,20 @@
 #pragma once
 
 #include <functional>
+#include <map>
 
 #include "janus/jsonl.hpp"
 
 namespace janus {
 
 using MessageFunction = std::function<void(const Message&)>;
+
+// Keeps JSONL discovery from parsing unchanged files on each sync. With this value,
+// discover_sessions logs and counts a file that it cannot read, and continues with other files.
+struct Discovery {
+  std::map<std::string, std::uint64_t> seen;
+  std::size_t failures = 0;
+};
 
 Session scan_session(const fs::path& path, Harness harness, const MessageFunction& on_message = {});
 void append_claude(Appender& output, Session& target, const Message& message);
@@ -23,6 +31,7 @@ Session scan_session(const SessionRef& session, const MessageFunction& on_messag
 SessionRef create_peer(const Store& target, const SessionRef& source);
 std::size_t copy_missing(const SessionRef& source, const SessionRef& target);
 std::uint64_t session_stamp(const SessionRef& session);
-std::vector<SessionRef> discover_sessions(const Store& store);
+SessionStatus session_status(const SessionRef& session);
+std::vector<SessionRef> discover_sessions(const Store& store, Discovery* discovery = nullptr);
 
 }  // namespace janus

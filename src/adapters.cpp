@@ -8,7 +8,10 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <ctime>
+#include <fstream>
+#include <iostream>
 #include <memory>
 #include <unordered_map>
 
@@ -82,33 +85,33 @@ class Statement {
 class Database {
  public:
   explicit Database(const fs::path& path) : path_(path) {
-    if (sqlite3_open_v2(path.string().c_str(), &value_, SQLITE_OPEN_READWRITE, nullptr) !=
-        SQLITE_OK) {
+    sqlite3* value = nullptr;
+    const int result =
+        sqlite3_open_v2(path.string().c_str(), &value, SQLITE_OPEN_READWRITE, nullptr);
+    value_.reset(value);
+    if (result != SQLITE_OK) {
       const std::string message =
-          value_ == nullptr ? "cannot open database" : sqlite3_errmsg(value_);
-      sqlite3_close(value_);
-      value_ = nullptr;
+          value_ == nullptr ? "cannot open database" : sqlite3_errmsg(value_.get());
       throw std::runtime_error(message + ": " + path.string());
     }
-    sqlite3_busy_timeout(value_, 5000);
+    sqlite3_busy_timeout(value_.get(), 5000);
   }
   Database(const Database&) = delete;
   Database& operator=(const Database&) = delete;
-  ~Database() { sqlite3_close(value_); }
-
-  Statement prepare(const char* sql) { return Statement(value_, sql); }
+  Statement prepare(const char* sql) { return Statement(value_.get(), sql); }
   void execute(const char* sql) {
     char* error = nullptr;
-    if (sqlite3_exec(value_, sql, nullptr, nullptr, &error) == SQLITE_OK) return;
-    const std::string message = error == nullptr ? sqlite3_errmsg(value_) : error;
-    sqlite3_free(error);
+    const int result = sqlite3_exec(value_.get(), sql, nullptr, nullptr, &error);
+    const std::unique_ptr<char, decltype(&sqlite3_free)> error_owner(error, &sqlite3_free);
+    if (result == SQLITE_OK) return;
+    const std::string message = error == nullptr ? sqlite3_errmsg(value_.get()) : error;
     throw std::runtime_error(message + ": " + path_.string());
   }
-  sqlite3* get() const { return value_; }
+  sqlite3* get() const { return value_.get(); }
 
  private:
   fs::path path_;
-  sqlite3* value_ = nullptr;
+  std::unique_ptr<sqlite3, decltype(&sqlite3_close)> value_{nullptr, &sqlite3_close};
 };
 
 class Transaction {
@@ -169,16 +172,32 @@ void append_database_message(Database& database, const SessionRef& target, Sessi
     return;
   }
   if (target.harness == Harness::opencode) {
-    const std::string message_id = "msg_" + make_uuid();
-    const std::string part_id = "prt_" + make_uuid();
+    // OpenCode sorts by time and then ID, and Janus can write many messages in one millisecond.
+    // Each message needs a later time than the previous one. For OpenCode, last_ordinal holds the
+    // newest message time. The ID uses the OpenCode form: 12 hex digits of time and counter, then
+    // 14 random characters, so its sort order matches the time order.
+    const std::int64_t created = std::max(now, static_cast<std::int64_t>(state.last_ordinal) + 1);
+    state.last_ordinal = static_cast<std::uint64_t>(created);
+    std::array<char, 13> ascending{};
+    std::snprintf(ascending.data(), ascending.size(), "%012llx",
+                  static_cast<unsigned long long>(
+                      (static_cast<std::uint64_t>(created) * 0x1000U + 1U) & 0xffffffffffffULL));
+    const auto make_id = [&](const char* prefix) {
+      std::string random = make_uuid();
+      std::erase(random, '-');
+      return prefix + std::string(ascending.data()) + random.substr(random.size() - 14);
+    };
+    const std::string message_id = make_id("msg_");
+    const std::string part_id = make_id("prt_");
     std::string data;
     if (role == "user") {
-      data = "{\"role\":\"user\",\"time\":{\"created\":" + std::to_string(now) +
+      data = "{\"role\":\"user\",\"time\":{\"created\":" + std::to_string(created) +
              "},\"agent\":\"build\",\"model\":{\"providerID\":\"openai\","
              "\"modelID\":\"janus-import\"}}";
     } else {
-      data = "{\"role\":\"assistant\",\"time\":{\"created\":" + std::to_string(now) +
-             ",\"completed\":" + std::to_string(now) + "},\"parentID\":" + quote(state.last_uuid) +
+      data = "{\"role\":\"assistant\",\"time\":{\"created\":" + std::to_string(created) +
+             ",\"completed\":" + std::to_string(created) +
+             "},\"parentID\":" + quote(state.last_uuid) +
              ",\"modelID\":\"janus-import\",\"providerID\":\"openai\","
              "\"mode\":\"build\",\"agent\":\"build\",\"path\":{\"cwd\":" +
              quote(state.cwd) + ",\"root\":" + quote(state.cwd) +
@@ -190,8 +209,8 @@ void append_database_message(Database& database, const SessionRef& target, Sessi
         "?, ?)");
     insert_message.bind(1, message_id);
     insert_message.bind(2, target.id);
-    insert_message.bind(3, now);
-    insert_message.bind(4, now);
+    insert_message.bind(3, created);
+    insert_message.bind(4, created);
     insert_message.bind(5, data);
     insert_message.row();
     Statement insert_part = database.prepare(
@@ -200,8 +219,8 @@ void append_database_message(Database& database, const SessionRef& target, Sessi
     insert_part.bind(1, part_id);
     insert_part.bind(2, message_id);
     insert_part.bind(3, target.id);
-    insert_part.bind(4, now);
-    insert_part.bind(5, now);
+    insert_part.bind(4, created);
+    insert_part.bind(5, created);
     insert_part.bind(6, "{\"type\":\"text\",\"text\":" + quote(message.text) + '}');
     insert_part.row();
     state.last_uuid = message_id;
@@ -356,6 +375,45 @@ Fingerprint fingerprint(const Message& message) {
   return {XXH3_128bits_withSeed(message.text.data(), message.text.size(), seed)};
 }
 
+std::uint64_t database_stamp(Database& database, const SessionRef& reference) {
+  const char* sql = reference.harness == Harness::hermes
+                        ? "SELECT COALESCE(MAX(id), 0) FROM messages WHERE session_id = ?"
+                    : reference.harness == Harness::opencode
+                        ? "SELECT COUNT(*) FROM message WHERE session_id = ?"
+                        : "SELECT COUNT(*) FROM transcript_events WHERE session_id = ?";
+  Statement query = database.prepare(sql);
+  query.bind(1, reference.id);
+  return query.row() ? static_cast<std::uint64_t>(query.integer(0)) : 0;
+}
+
+// An append must start on a new line. Another program can still be writing an unfinished line,
+// so Janus waits for that program. After this time, Janus treats that program as stopped.
+constexpr std::chrono::seconds unfinished_record_timeout{60};
+
+void end_final_line(const fs::path& path) {
+  {
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input || input.tellg() <= 0) return;
+    input.seekg(-1, std::ios::end);
+    if (input.get() == '\n') return;
+  }
+  std::string final_line;
+  each_jsonl_record(path, [&](const std::string& line) { final_line = line; });
+  simdjson::dom::parser parser;
+  simdjson::dom::object record;
+  const bool complete = parser.parse(final_line).get_object().get(record) == simdjson::SUCCESS;
+  const auto age = fs::file_time_type::clock::now() - fs::last_write_time(path);
+  if (!complete && age < unfinished_record_timeout) {
+    throw std::runtime_error(path.string() +
+                             " ends in an unfinished record; another program can be writing it; "
+                             "Janus tries again on the next sync");
+  }
+  std::ofstream output(path, std::ios::binary | std::ios::app);
+  output.put('\n');
+  output.flush();
+  if (!output) throw std::runtime_error("cannot write " + path.string());
+}
+
 }  // namespace
 
 Session scan_session(const fs::path& path, Harness harness, const MessageFunction& on_message) {
@@ -376,6 +434,10 @@ Session scan_session(const fs::path& path, Harness harness, const MessageFunctio
       if (session.id.empty()) session.id = string_field(root, "sessionId");
       if (session.cwd.empty()) session.cwd = string_field(root, "cwd");
       if (type == "ai-title") session.title = string_field(root, "aiTitle");
+      const std::string uuid = string_field(root, "uuid");
+      bool sidechain = false;
+      if (root["isSidechain"].get_bool().get(sidechain) != simdjson::SUCCESS) sidechain = false;
+      if (!uuid.empty() && !sidechain) session.last_uuid = uuid;
       if (type != "user" && type != "assistant") return;
       simdjson::dom::object message;
       if (root["message"].get_object().get(message) != simdjson::SUCCESS) return;
@@ -383,7 +445,6 @@ Session scan_session(const fs::path& path, Harness harness, const MessageFunctio
       if (message["content"].get(content) != simdjson::SUCCESS) return;
       std::string text = content_text(content);
       if (text.empty()) return;
-      session.last_uuid = string_field(root, "uuid");
       const std::string role = string_field(message, "role");
       if (role == "user" && session.first_user.empty()) session.first_user = text;
       if (on_message) on_message({role, std::move(text), string_field(root, "timestamp")});
@@ -396,6 +457,8 @@ Session scan_session(const fs::path& path, Harness harness, const MessageFunctio
         session.cwd = string_field(root, "cwd");
         return;
       }
+      const std::string record_id = string_field(root, "id");
+      if (!record_id.empty()) session.last_uuid = record_id;
       if (type == "session_info") {
         session.title = string_field(root, "name");
         return;
@@ -409,7 +472,6 @@ Session scan_session(const fs::path& path, Harness harness, const MessageFunctio
       if (message["content"].get(content) != simdjson::SUCCESS) return;
       std::string text = content_text(content);
       if (text.empty()) return;
-      session.last_uuid = string_field(root, "id");
       if (role == "user" && session.first_user.empty()) session.first_user = text;
       if (on_message) on_message({role, std::move(text), string_field(root, "timestamp")});
       return;
@@ -517,6 +579,14 @@ Session scan_session(const SessionRef& reference, const MessageFunction& on_mess
       throw std::runtime_error("OpenCode session does not exist: " + reference.id);
     session.cwd = metadata.text(0);
     session.title = metadata.text(1);
+    Statement newest = database.prepare(
+        "SELECT id, time_created FROM message WHERE session_id = ? "
+        "ORDER BY time_created DESC, id DESC LIMIT 1");
+    newest.bind(1, reference.id);
+    if (newest.row()) {
+      session.last_uuid = newest.text(0);
+      session.last_ordinal = static_cast<std::uint64_t>(newest.integer(1));
+    }
     Statement messages = database.prepare(
         "SELECT m.id, json_extract(m.data, '$.role'), json_extract(p.data, '$.text') "
         "FROM message m JOIN part p ON p.message_id = m.id "
@@ -567,8 +637,9 @@ Session scan_session(const SessionRef& reference, const MessageFunction& on_mess
       session.cwd = string_field(root, "cwd");
       continue;
     }
+    const std::string record_id = string_field(root, "id");
+    if (!record_id.empty()) session.last_uuid = record_id;
     if (type != "message") continue;
-    session.last_uuid = string_field(root, "id");
     simdjson::dom::object body;
     if (root["message"].get_object().get(body) != simdjson::SUCCESS) continue;
     const std::string role = string_field(body, "role");
@@ -586,17 +657,25 @@ Session scan_session(const SessionRef& reference, const MessageFunction& on_mess
 std::uint64_t session_stamp(const SessionRef& reference) {
   if (!is_database_harness(reference.harness)) return fs::file_size(reference.store);
   Database database(reference.store);
-  const char* sql = reference.harness == Harness::hermes
-                        ? "SELECT COALESCE(MAX(id), 0) FROM messages WHERE session_id = ?"
-                    : reference.harness == Harness::opencode
-                        ? "SELECT COUNT(*) FROM message WHERE session_id = ?"
-                        : "SELECT COUNT(*) FROM transcript_events WHERE session_id = ?";
-  Statement query = database.prepare(sql);
-  query.bind(1, reference.id);
-  return query.row() ? static_cast<std::uint64_t>(query.integer(0)) : 0;
+  return database_stamp(database, reference);
 }
 
-std::vector<SessionRef> discover_sessions(const Store& store) {
+SessionStatus session_status(const SessionRef& reference) {
+  if (!fs::exists(reference.store)) return SessionStatus::missing;
+  if (!is_database_harness(reference.harness)) return SessionStatus::active;
+  Database database(reference.store);
+  const char* sql = reference.harness == Harness::hermes
+                        ? "SELECT archived = 0 AND hidden = 0 FROM sessions WHERE id = ?"
+                    : reference.harness == Harness::opencode
+                        ? "SELECT time_archived IS NULL FROM session WHERE id = ?"
+                        : "SELECT ended_at IS NULL FROM session_windows WHERE session_id = ?";
+  Statement query = database.prepare(sql);
+  query.bind(1, reference.id);
+  if (!query.row()) return SessionStatus::missing;
+  return query.integer(0) != 0 ? SessionStatus::active : SessionStatus::inactive;
+}
+
+std::vector<SessionRef> discover_sessions(const Store& store, Discovery* discovery) {
   std::vector<SessionRef> sessions;
   if (!fs::exists(store.path)) return sessions;
   if (!is_database_harness(store.harness)) {
@@ -613,11 +692,27 @@ std::vector<SessionRef> discover_sessions(const Store& store) {
       const std::string name = iterator->path().filename().string();
       if (store.harness == Harness::claude && name == "skill-injections.jsonl") continue;
       if (store.harness == Harness::codex && !name.starts_with("rollout-")) continue;
-      Session session = scan_session(iterator->path(), store.harness);
-      if (!session.id.empty()) {
-        sessions.push_back({store.harness, iterator->path(), session.id,
-                            static_cast<std::uint64_t>(iterator->file_size())});
+      const std::uint64_t size = iterator->file_size(error);
+      if (error) continue;
+      const std::string key = fs::absolute(iterator->path()).lexically_normal().string();
+      if (discovery != nullptr) {
+        const auto seen = discovery->seen.find(key);
+        if (seen != discovery->seen.end() && seen->second == size) continue;
       }
+      Session session;
+      try {
+        session = scan_session(iterator->path(), store.harness);
+      } catch (const std::exception& scan_error) {
+        if (discovery == nullptr) throw;
+        std::cerr << "cannot read " << harness_name(store.harness) << " session "
+                  << iterator->path().string() << ": " << scan_error.what()
+                  << "; fix the file, and Janus tries again on the next sync\n";
+        ++discovery->failures;
+        continue;
+      }
+      if (discovery != nullptr) discovery->seen[key] = size;
+      if (!session.id.empty())
+        sessions.push_back({store.harness, iterator->path(), session.id, size});
     }
     std::ranges::sort(sessions, {}, [](const SessionRef& session) { return session.store; });
     return sessions;
@@ -721,46 +816,54 @@ SessionRef create_peer(const Store& destination, const SessionRef& source_refere
                           : pi_path(destination.path, target);
     fs::create_directories(reference.store.parent_path());
     const fs::path temporary = reference.store.string() + ".tmp";
-    {
-      Appender output(temporary);
-      if (destination.harness == Harness::codex) {
-        const std::string timestamp = now_iso();
-        output.line("{\"timestamp\":" + quote(timestamp) +
-                    ",\"ordinal\":0,\"type\":\"session_meta\",\"payload\":{\"session_id\":" +
-                    quote(target.id) + ",\"id\":" + quote(target.id) +
-                    ",\"timestamp\":" + quote(timestamp) + ",\"cwd\":" + quote(target.cwd) +
-                    ",\"originator\":\"janus\",\"cli_version\":\"0.0.0\",\"source\":\"cli\","
-                    "\"model_provider\":\"openai\",\"history_mode\":\"legacy\"}}");
-      } else if (destination.harness == Harness::kiss || destination.harness == Harness::pi) {
-        const std::string header_id = make_uuid();
-        output.line("{\"type\":\"session\",\"version\":3,\"id\":" + quote(target.id) +
-                    ",\"timestamp\":" + quote(now_iso()) + ",\"cwd\":" + quote(target.cwd) + '}');
-        output.line("{\"type\":\"session_info\",\"id\":" + quote(header_id) +
-                    ",\"parentId\":null,\"timestamp\":" + quote(now_iso()) +
-                    ",\"name\":" + quote(target.title) + '}');
-        target.last_uuid = header_id;
-      } else if (destination.harness == Harness::claude) {
-        output.line("{\"type\":\"ai-title\",\"sessionId\":" + quote(target.id) +
-                    ",\"aiTitle\":" + quote(target.title) + '}');
-      } else {
-        throw std::runtime_error("target is not a JSONL harness");
+    try {
+      {
+        Appender output(temporary);
+        if (destination.harness == Harness::codex) {
+          const std::string timestamp = now_iso();
+          output.line("{\"timestamp\":" + quote(timestamp) +
+                      ",\"ordinal\":0,\"type\":\"session_meta\",\"payload\":{\"session_id\":" +
+                      quote(target.id) + ",\"id\":" + quote(target.id) +
+                      ",\"timestamp\":" + quote(timestamp) + ",\"cwd\":" + quote(target.cwd) +
+                      ",\"originator\":\"janus\",\"cli_version\":\"0.0.0\",\"source\":\"cli\","
+                      "\"model_provider\":\"openai\",\"history_mode\":\"legacy\"}}");
+        } else if (destination.harness == Harness::kiss || destination.harness == Harness::pi) {
+          const std::string header_id = make_uuid();
+          output.line("{\"type\":\"session\",\"version\":3,\"id\":" + quote(target.id) +
+                      ",\"timestamp\":" + quote(now_iso()) + ",\"cwd\":" + quote(target.cwd) + '}');
+          output.line("{\"type\":\"session_info\",\"id\":" + quote(header_id) +
+                      ",\"parentId\":null,\"timestamp\":" + quote(now_iso()) +
+                      ",\"name\":" + quote(target.title) + '}');
+          target.last_uuid = header_id;
+        } else if (destination.harness == Harness::claude) {
+          output.line("{\"type\":\"ai-title\",\"sessionId\":" + quote(target.id) +
+                      ",\"aiTitle\":" + quote(target.title) + '}');
+        } else {
+          throw std::runtime_error("target is not a JSONL harness");
+        }
+        scan_session(source_reference, [&](const Message& message) {
+          if (destination.harness == Harness::codex)
+            append_codex(output, target, message);
+          else if (destination.harness == Harness::claude)
+            append_claude(output, target, message);
+          else
+            append_pi(output, target, message);
+        });
       }
-      scan_session(source_reference, [&](const Message& message) {
-        if (destination.harness == Harness::codex)
-          append_codex(output, target, message);
-        else if (destination.harness == Harness::claude)
-          append_claude(output, target, message);
-        else
-          append_pi(output, target, message);
-      });
+      fs::rename(temporary, reference.store);
+      if (destination.harness == Harness::codex) {
+        Appender index(destination.path.parent_path() / "session_index.jsonl");
+        index.line("{\"id\":" + quote(target.id) + ",\"thread_name\":" + quote(target.title) +
+                   ",\"updated_at\":" + quote(now_iso()) + '}');
+      }
+      reference.stamp = session_stamp(reference);
+    } catch (...) {
+      // A file with no group looks like a new session on the next sync, so remove it.
+      std::error_code ignored;
+      fs::remove(temporary, ignored);
+      fs::remove(reference.store, ignored);
+      throw;
     }
-    fs::rename(temporary, reference.store);
-    if (destination.harness == Harness::codex) {
-      Appender index(destination.path.parent_path() / "session_index.jsonl");
-      index.line("{\"id\":" + quote(target.id) + ",\"thread_name\":" + quote(target.title) +
-                 ",\"updated_at\":" + quote(now_iso()) + '}');
-    }
-    reference.stamp = session_stamp(reference);
     return reference;
   }
 
@@ -873,8 +976,8 @@ SessionRef create_peer(const Store& destination, const SessionRef& source_refere
     ++count;
   });
   finish_database_append(database, reference, count);
+  reference.stamp = database_stamp(database, reference);
   transaction.commit();
-  reference.stamp = session_stamp(reference);
   return reference;
 }
 
@@ -894,6 +997,7 @@ fs::path create_peer(const fs::path& root, const fs::path& source_path, Harness 
 
 std::size_t copy_missing(const fs::path& source_path, Harness source_harness,
                          const fs::path& target_path, Harness target_harness) {
+  end_final_line(target_path);
   std::unordered_map<Fingerprint, std::uint32_t, FingerprintHash> remaining;
   Session target = scan_session(target_path, target_harness,
                                 [&](const Message& message) { ++remaining[fingerprint(message)]; });
@@ -921,6 +1025,7 @@ std::size_t copy_missing(const SessionRef& source, const SessionRef& target_refe
     return copy_missing(source.store, source.harness, target_reference.store,
                         target_reference.harness);
   }
+  if (!is_database_harness(target_reference.harness)) end_final_line(target_reference.store);
 
   std::unordered_map<Fingerprint, std::uint32_t, FingerprintHash> remaining;
   Session target = scan_session(target_reference,

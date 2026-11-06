@@ -1,6 +1,8 @@
 #include <CLI/CLI.hpp>
+#include <algorithm>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <exception>
 #include <iostream>
 #include <thread>
@@ -83,20 +85,26 @@ Move sessions between AI coding harnesses)",
     } else if (sync) {
       const janus::ProcessLock lock(sync_options.state);
       janus::Syncer syncer(sync_options);
-      std::cout << "sync changes: " << syncer.sync() << '\n';
+      const std::size_t changes = syncer.sync();
+      std::cout << "sync changes: " << changes << '\n';
     } else if (serve) {
       const janus::ProcessLock lock(serve_options.state);
-      if (serve_options.daemonize) janus::daemonize_process();
+      if (serve_options.daemonize) janus::daemonize_process(serve_options.state.string() + ".log");
       janus::Syncer syncer(serve_options);
       std::signal(SIGINT, stop);
       std::signal(SIGTERM, stop);
+      const unsigned longest_delay = std::max(serve_options.interval, 300U);
+      unsigned delay = serve_options.interval;
       while (running) {
         try {
           syncer.sync();
+          delay = serve_options.interval;
         } catch (const std::exception& error) {
-          std::cerr << "sync error: " << error.what() << '\n';
+          std::cerr << janus::now_iso() << " sync error: " << error.what() << '\n';
+          delay = delay > longest_delay / 2 ? longest_delay : delay * 2;
         }
-        for (unsigned tick = 0; running && tick < serve_options.interval * 10; ++tick) {
+        const std::uint64_t ticks = std::uint64_t{delay} * 10;
+        for (std::uint64_t tick = 0; running && tick < ticks; ++tick) {
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
       }

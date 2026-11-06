@@ -2,6 +2,36 @@
 
 All notable changes to Janus are documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- A deleted session stays deleted after a restart. Run `janus import` to create it again.
+- Janus does not read or write archived, hidden, or ended sessions, and catches up after a restore.
+- `janus serve` uses a new harness store without a restart.
+- `janus serve --daemonize` writes messages and errors to the state file path plus `.log`.
+- `janus serve` increases its delay after a failed sync, up to 5 minutes.
+- `janus update` makes no change when the running version is newer than the latest release.
+- `install.sh` does not probe a target that you set with `JANUS_TARGET`.
+
+### Fixed
+
+- Stop duplicate sessions after a failed peer creation, a failed copy, or a failed state save.
+- Stop a bad state file row from causing duplicate sessions in `janus serve`.
+- A failure in one session or store no longer stops the others.
+- A deleted or archived session no longer stops its group.
+- Do not lose a message that arrives during a sync.
+- Do not join a new record to an unterminated line in a session file.
+- Read a complete final record that has no newline.
+- Treat a short read as an error, not as the end of a session.
+- Use the last record in the parent chain as the parent of each new record.
+- Write OpenCode messages with strictly increasing times and IDs, so they keep their source order.
+- An unreadable new session no longer stops discovery of other sessions in its store.
+- An idle sync no longer parses unchanged JSONL files.
+- Replace the state file in one step on Windows, so a crash cannot lose it.
+- Report the location of the previous executable if a Windows update cannot restore it.
+- Remove the staged file if the Windows installer cannot complete its final move.
+
 ## [0.0.3] - 2026-09-13
 
 ### Added
