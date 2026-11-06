@@ -2,7 +2,7 @@
 
 All notable changes to Janus are documented in this file.
 
-## [Unreleased]
+## [0.0.4] - 2026-11-06
 
 ### Changed
 
